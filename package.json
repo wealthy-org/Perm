@@ -1,0 +1,29 @@
+{
+  "name": "perm-interface",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.6",
+    "postcss": "8.5.33",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "three": "0.169.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@types/three": "0.169.0",
+    "typescript": "^5.7.2"
+  }
+}
