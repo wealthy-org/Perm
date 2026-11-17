@@ -90,7 +90,6 @@ export default function Header({ extra }: { extra?: ReactNode }) {
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true">
               <path d="M18.25 2.25h3.37l-7.36 8.42 8.66 11.08h-6.79l-5.32-6.84-5.99 6.84H1.44l7.8-8.91L.92 2.25h6.96l4.8 6.16 5.57-6.16Zm-1.18 17.55h1.87L6.86 4.1H4.85L17.07 19.8Z" />
             </svg>
-            <span className="desktop-only">X</span>
           </a>
           {extra}
           <Link className="header-cta" href="/trade">Launch app</Link>
