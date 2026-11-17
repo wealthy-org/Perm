@@ -45,7 +45,8 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   };
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(palette.horizon, 105, 520);
+  const sceneFog = new THREE.Fog(palette.horizon, 4, 62);
+  scene.fog = sceneFog;
   const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 1500);
   const clock = new THREE.Clock();
   const animated: Array<(time: number) => void> = [];
@@ -625,9 +626,12 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
 
   // ---------- camera journey ----------
   const cameraKeys: CameraKey[] = [
-    { at: 0, position: V(0, 4.15, 29), look: V(0, 4.25, -68) },
-    { at: 0.095, position: V(0.45, 4.8, 15), look: V(0, 4.6, -72) },
-    { at: 0.18, position: V(-0.35, 3.7, 4), look: V(0, 4.5, -42) },
+    { at: 0, position: V(0, 8.5, 108), look: V(0, 11.2, -290) },
+    { at: 0.04, position: V(0, 10, 100), look: V(0, 7.5, -250) },
+    { at: 0.058, position: V(0, 16, 90), look: V(0, 4, -190) },
+    { at: 0.075, position: V(0, 28, 78), look: V(0, 1.8, -145) },
+    { at: 0.115, position: V(0, 47, 61), look: V(0, 1.5, -126) },
+    { at: 0.18, position: V(-0.35, 3.7, 23), look: V(0, 4.5, -45) },
     { at: 0.30, position: V(-1.1, 4.0, -30), look: V(13, 6.4, -39) },
     { at: 0.43, position: V(1.1, 4.0, -70), look: V(-13, 6.4, -79) },
     { at: 0.56, position: V(-1.1, 4.0, -110), look: V(13, 6.4, -119) },
@@ -684,9 +688,12 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
     if (disposed) return;
     const delta = Math.min(clock.getDelta(), 0.12);
     const elapsed = clock.elapsedTime;
-    current += (target - current) * (1 - Math.exp(-delta * (reducedMotion ? 20 : 4.6)));
+    current += (target - current) * (1 - Math.exp(-delta * (reducedMotion ? 24 : 12)));
     if (Math.abs(target - current) < 0.00001) current = target;
     readCamera(current);
+    const fogReveal = smooth(clamp01((current - 0.02) / 0.095));
+    sceneFog.near = THREE.MathUtils.lerp(4, 260, fogReveal);
+    sceneFog.far = THREE.MathUtils.lerp(62, 1100, fogReveal);
     const motion = reducedMotion ? 0 : 1;
     camera.position.set(
       cameraPosition.x + pointerX * 0.16 * motion,

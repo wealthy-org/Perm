@@ -128,6 +128,9 @@ function CardKicker({ left, right }: { left: string; right: string }) {
 
 export default function Landing() {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const hero = useRef<HTMLElement>(null);
+  const scrollHint = useRef<HTMLDivElement>(null);
+  const cardElements = useRef<Array<HTMLElement | null>>([]);
   const controller = useRef<SceneController | null>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -138,6 +141,9 @@ export default function Landing() {
   useEffect(() => {
     let active = true;
     let cleanupScroll: (() => void) | undefined;
+    let currentReader: (() => void) | undefined;
+    let scrollTimer = 0;
+    let lastObservedScroll = -1;
     let minimumPassed = false;
     let sceneLoaded = false;
     const revealWhenReady = () => {
@@ -147,7 +153,26 @@ export default function Landing() {
     const minimumIntro = window.setTimeout(() => {
       minimumPassed = true;
       revealWhenReady();
-    }, 980);
+    }, 1320);
+
+    const applyPresentation = (next: number, isPast: boolean) => {
+      const heroVisibility = Math.max(0, 1 - next / 0.075);
+      if (hero.current) {
+        hero.current.style.opacity = String(heroVisibility);
+        hero.current.style.transform = `translateY(${(1 - heroVisibility) * -22}px) scale(${0.965 + heroVisibility * 0.035})`;
+        hero.current.style.filter = `blur(${(1 - heroVisibility) * 5}px)`;
+      }
+      if (scrollHint.current) scrollHint.current.style.opacity = String(Math.max(0, 1 - next / 0.035));
+      cardElements.current.forEach((element, index) => {
+        const card = JOURNEY_CARDS[index];
+        element?.classList.toggle("visible", !isPast && next >= card.from && next <= card.to);
+      });
+    };
+
+    const monitorScroll = () => {
+      if (currentReader && Math.abs(scrollY - lastObservedScroll) > 0.5) currentReader();
+    };
+    scrollTimer = window.setInterval(monitorScroll, 48);
 
     const start = async () => {
       try {
@@ -163,14 +188,17 @@ export default function Landing() {
         setStops(scene.stops);
 
         const read = () => {
+          lastObservedScroll = scrollY;
           const max = journeyEnd();
           const next = max > 0 ? Math.min(1, scrollY / max) : 0;
           scene.setTarget(next);
-          setProgress(next);
           const isPast = scrollY > max + innerHeight * 0.12;
+          applyPresentation(next, isPast);
+          setProgress(next);
           setPastJourney(isPast);
           document.body.classList.toggle("after-journey", isPast);
         };
+        currentReader = read;
         addEventListener("scroll", read, { passive: true });
         addEventListener("resize", read, { passive: true });
         read();
@@ -185,11 +213,15 @@ export default function Landing() {
         sceneLoaded = true;
         revealWhenReady();
         const readFallback = () => {
+          lastObservedScroll = scrollY;
           const max = journeyEnd();
           const value = max > 0 ? Math.min(1, scrollY / max) : 0;
+          const isPast = scrollY > max + innerHeight * 0.12;
+          applyPresentation(value, isPast);
           setProgress(value);
-          setPastJourney(scrollY > max + innerHeight * 0.12);
+          setPastJourney(isPast);
         };
+        currentReader = readFallback;
         addEventListener("scroll", readFallback, { passive: true });
         readFallback();
         cleanupScroll = () => removeEventListener("scroll", readFallback);
@@ -200,6 +232,8 @@ export default function Landing() {
     start();
     return () => {
       active = false;
+      currentReader = undefined;
+      window.clearInterval(scrollTimer);
       window.clearTimeout(minimumIntro);
       window.clearTimeout(safety);
       cleanupScroll?.();
@@ -213,12 +247,10 @@ export default function Landing() {
     scrollTo({ top: target * journeyEnd(), behavior: "smooth" });
   };
 
-  const heroVisibility = Math.max(0, 1 - progress / 0.075);
   let activeStop = -1;
   stops.forEach((stop, index) => {
     if (progress >= stop.a - 0.025) activeStop = index;
   });
-  const progressLabel = activeStop >= 0 ? `${stops[activeStop].n} · ${stops[activeStop].label.toUpperCase()}` : "00 · ENTER";
 
   return (
     <main className={`landing${ready ? " entered" : ""}`}>
@@ -229,17 +261,14 @@ export default function Landing() {
       <div className={`site-loader${ready ? " hidden" : ""}`} aria-hidden={ready}>
         <div className="loader-emblem"><i /><i /><span /><img src="/perm-mark.png" alt="" /></div>
         <b>PERM</b>
-        <span>CALIBRATING ROUTES</span>
-        <small>ROUTE · REBATE · PROOF</small>
+        <span>ENTERING THE FLOW</span>
+        <small>LOADING THE PERM WORLD</small>
         <div className="loader-bar"><i /></div>
       </div>
 
       <Header extra={<AudioToggle />} />
 
-      <section
-        className="landing-hero"
-        style={{ opacity: heroVisibility, transform: `translateY(${(1 - heroVisibility) * -28}px)` }}
-      >
+      <section ref={hero} className="landing-hero">
         <div className="hero-orbit" aria-hidden="true"><i /><i /></div>
         <span className="hero-kicker"><i /> HOOK-AWARE ROUTING · TRANSPARENT REBATE</span>
         <h1>PERM</h1>
@@ -254,14 +283,15 @@ export default function Landing() {
         </div>
       </section>
 
-      <div className="scroll-hint" style={{ opacity: Math.max(0, 1 - progress / 0.035) }}>
+      <div ref={scrollHint} className="scroll-hint">
         <span>SCROLL TO FOLLOW THE ROUTE</span><i />
       </div>
 
       {JOURNEY_CARDS.map((card, index) => (
         <article
           key={index}
-          className={`journey-card ${card.align === "right" ? "right-card" : ""}${!pastJourney && progress >= card.from && progress <= card.to ? " visible" : ""}`}
+          ref={(element) => { cardElements.current[index] = element; }}
+          className={`journey-card ${card.align === "right" ? "right-card" : ""}`}
         >
           {card.content}
         </article>
@@ -274,10 +304,6 @@ export default function Landing() {
           </button>
         ))}
       </nav>
-
-      <div className={`journey-progress${pastJourney ? " hidden" : ""}`} aria-hidden="true">
-        <b>{progressLabel}</b><div><i style={{ transform: `scaleX(${progress})` }} /></div><span>{Math.round(progress * 100).toString().padStart(2, "0")}</span>
-      </div>
 
       <div id="journey-track" />
       <div id="capabilities"><FeatureStack /></div>
