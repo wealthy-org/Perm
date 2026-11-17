@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import TokenLogo from "./TokenLogo";
 
 const FEATURES: Array<{
   id: string;
@@ -140,6 +141,7 @@ function RouteVisual() {
   ] as const;
   return (
     <div className="route-visual">
+      <div className="visual-token-pair"><TokenLogo symbol="ETH" size={30} /><i>→</i><TokenLogo symbol="USDC" size={30} /><span>ETH / USDC</span></div>
       {routes.map(([name, amount, width, selected], index) => (
         <div className={`route-line${selected ? " selected" : ""}`} key={name} style={{ "--delay": `${index * 160}ms` } as CSSProperties}>
           <div><span>{selected ? "✓ " : ""}{name}</span><b>{amount}</b></div>

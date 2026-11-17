@@ -16,9 +16,9 @@ export default function Footer() {
         <div>
           <h4>PRODUCT</h4>
           <Link href="/trade">Trade</Link>
-          <Link href="/#routing">Routing</Link>
-          <Link href="/#rebate">Fee rebate</Link>
-          <Link href="/#proof">Proof receipts</Link>
+          <Link href="/routes">Route explorer</Link>
+          <Link href="/rebate">Fee rebate</Link>
+          <Link href="/proofs">Proof receipts</Link>
         </div>
         <div>
           <h4>BUILD</h4>
@@ -28,7 +28,7 @@ export default function Footer() {
         </div>
         <div>
           <h4>COMMUNITY</h4>
-          <a href="https://x.com/usepermonx" target="_blank" rel="noopener noreferrer">X · @usepermonx ↗</a>
+          <a className="footer-social" href="https://x.com/usepermonx" target="_blank" rel="noopener noreferrer" aria-label="Perm on X"><svg className="x-mark" viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M18.25 2.25h3.37l-7.36 8.42 8.66 11.08h-6.79l-5.32-6.84-5.99 6.84H1.44l7.8-8.91L.92 2.25h6.96l4.8 6.16 5.57-6.16Zm-1.18 17.55h1.87L6.86 4.1H4.85L17.07 19.8Z" /></svg><span>@usepermonx ↗</span></a>
           <span>© 2026 Perm</span>
         </div>
       </div>

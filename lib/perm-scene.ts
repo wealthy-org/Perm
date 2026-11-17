@@ -247,9 +247,32 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   const deck = new THREE.Mesh(new THREE.BoxGeometry(10.1, deckHeight, routeLength), [marble, marble, marbleFloor, marble, marble, marble]);
   deck.position.set(0, deckHeight / 2, routeMiddle);
   scene.add(deck);
-  const routeInlay = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.025, routeLength - 3), glow(palette.mint, 1.9));
+  const routeInlayMaterial = glow(palette.mint, 1.9);
+  const routeInlay = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.025, routeLength - 3), routeInlayMaterial);
   routeInlay.position.set(0, deckHeight + 0.025, routeMiddle + 0.5);
   scene.add(routeInlay);
+  animated.push((time) => {
+    routeInlayMaterial.emissiveIntensity = 1.45 + Math.sin(time * 2.15) * 0.48;
+  });
+
+  const lanePacketCount = mobile ? 18 : 30;
+  const lanePacketPositions = new Float32Array(lanePacketCount * 3);
+  const lanePacketGeometry = new THREE.BufferGeometry();
+  lanePacketGeometry.setAttribute("position", new THREE.BufferAttribute(lanePacketPositions, 3));
+  const lanePackets = new THREE.Points(
+    lanePacketGeometry,
+    new THREE.PointsMaterial({ color: palette.mint, size: mobile ? 0.16 : 0.13, transparent: true, opacity: 0.86, depthWrite: false, blending: THREE.AdditiveBlending }),
+  );
+  scene.add(lanePackets);
+  animated.push((time) => {
+    for (let index = 0; index < lanePacketCount; index++) {
+      const travel = (time * 0.074 + index / lanePacketCount) % 1;
+      lanePacketPositions[index * 3] = Math.sin(index * 2.37) * 0.16;
+      lanePacketPositions[index * 3 + 1] = deckHeight + 0.12 + Math.sin(time * 2 + index) * 0.025;
+      lanePacketPositions[index * 3 + 2] = routeStart - 2 - travel * (routeLength - 4);
+    }
+    lanePacketGeometry.attributes.position.needsUpdate = true;
+  });
 
   const stationSpecs = [
     { z: -39, side: 1 },
@@ -568,14 +591,22 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   // ---------- clouds and atmospheric particles ----------
   const cloudTexture = createCloudTexture();
   const cloudCount = mobile ? 34 : 72;
+  const driftingClouds: Array<{ cloud: THREE.Sprite; startX: number; startY: number; speed: number }> = [];
   for (let index = 0; index < cloudCount; index++) {
     const material = new THREE.SpriteMaterial({ map: cloudTexture, transparent: true, depthWrite: false, opacity: 0.34 + Math.random() * 0.3, fog: true });
     const cloud = new THREE.Sprite(material);
     const scale = 24 + Math.random() * 45;
+    const startX = (Math.random() - 0.5) * 280;
+    const startY = 20 + Math.random() * 26;
     cloud.scale.set(scale * 1.75, scale, 1);
-    cloud.position.set((Math.random() - 0.5) * 280, 20 + Math.random() * 26, 70 - Math.random() * 390);
+    cloud.position.set(startX, startY, 70 - Math.random() * 390);
+    driftingClouds.push({ cloud, startX, startY, speed: 0.34 + Math.random() * 0.34 });
     scene.add(cloud);
   }
+  animated.push((time) => driftingClouds.forEach(({ cloud, startX, startY, speed }, index) => {
+    cloud.position.x = ((startX + time * speed + 170) % 340) - 170;
+    cloud.position.y = startY + Math.sin(time * 0.08 + index) * 0.14;
+  }));
   const moteCount = mobile ? 110 : 230;
   const motePositions = new Float32Array(moteCount * 3);
   for (let index = 0; index < moteCount; index++) {
@@ -587,12 +618,16 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   moteGeometry.setAttribute("position", new THREE.BufferAttribute(motePositions, 3));
   const motes = new THREE.Points(moteGeometry, new THREE.PointsMaterial({ color: 0xc7fff0, size: 0.08, transparent: true, opacity: 0.5, depthWrite: false }));
   scene.add(motes);
+  animated.push((time) => {
+    motes.rotation.y = Math.sin(time * 0.035) * 0.018;
+    motes.position.y = Math.sin(time * 0.24) * 0.12;
+  });
 
   // ---------- camera journey ----------
   const cameraKeys: CameraKey[] = [
-    { at: 0, position: V(0, 64, 92), look: V(0, 9, -150) },
-    { at: 0.095, position: V(0, 32, 43), look: V(0, 5, -95) },
-    { at: 0.18, position: V(0, 3.6, 23), look: V(0, 4.4, -42) },
+    { at: 0, position: V(0, 4.15, 29), look: V(0, 4.25, -68) },
+    { at: 0.095, position: V(0.45, 4.8, 15), look: V(0, 4.6, -72) },
+    { at: 0.18, position: V(-0.35, 3.7, 4), look: V(0, 4.5, -42) },
     { at: 0.30, position: V(-1.1, 4.0, -30), look: V(13, 6.4, -39) },
     { at: 0.43, position: V(1.1, 4.0, -70), look: V(-13, 6.4, -79) },
     { at: 0.56, position: V(-1.1, 4.0, -110), look: V(13, 6.4, -119) },

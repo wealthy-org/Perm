@@ -138,13 +138,26 @@ export default function Landing() {
   useEffect(() => {
     let active = true;
     let cleanupScroll: (() => void) | undefined;
+    let minimumPassed = false;
+    let sceneLoaded = false;
+    const revealWhenReady = () => {
+      if (active && minimumPassed && sceneLoaded) setReady(true);
+    };
+
+    const minimumIntro = window.setTimeout(() => {
+      minimumPassed = true;
+      revealWhenReady();
+    }, 980);
 
     const start = async () => {
       try {
         const { createPermScene } = await import("@/lib/perm-scene");
         if (!active || !canvas.current) return;
         const scene = createPermScene(canvas.current, {
-          onReady: () => active && setReady(true),
+          onReady: () => {
+            sceneLoaded = true;
+            revealWhenReady();
+          },
         });
         controller.current = scene;
         setStops(scene.stops);
@@ -169,7 +182,8 @@ export default function Landing() {
         console.error("Perm WebGL scene unavailable", error);
         if (!active) return;
         setFailed(true);
-        setReady(true);
+        sceneLoaded = true;
+        revealWhenReady();
         const readFallback = () => {
           const max = journeyEnd();
           const value = max > 0 ? Math.min(1, scrollY / max) : 0;
@@ -186,6 +200,7 @@ export default function Landing() {
     start();
     return () => {
       active = false;
+      window.clearTimeout(minimumIntro);
       window.clearTimeout(safety);
       cleanupScroll?.();
       controller.current?.dispose();
@@ -203,16 +218,20 @@ export default function Landing() {
   stops.forEach((stop, index) => {
     if (progress >= stop.a - 0.025) activeStop = index;
   });
+  const progressLabel = activeStop >= 0 ? `${stops[activeStop].n} · ${stops[activeStop].label.toUpperCase()}` : "00 · ENTER";
 
   return (
-    <main className="landing">
+    <main className={`landing${ready ? " entered" : ""}`}>
       <canvas id="perm-scene" ref={canvas} className={failed ? "failed" : undefined} aria-hidden="true" />
       <div className={`scene-fallback${failed ? " visible" : ""}`} aria-hidden="true"><i /><i /><i /></div>
+      <div className="scene-atmosphere" aria-hidden="true"><i /><i /><i /></div>
 
       <div className={`site-loader${ready ? " hidden" : ""}`} aria-hidden={ready}>
-        <img src="/perm-mark.png" alt="" />
-        <span>ENTERING THE FLOW</span>
-        <div><i /></div>
+        <div className="loader-emblem"><i /><i /><span /><img src="/perm-mark.png" alt="" /></div>
+        <b>PERM</b>
+        <span>CALIBRATING ROUTES</span>
+        <small>ROUTE · REBATE · PROOF</small>
+        <div className="loader-bar"><i /></div>
       </div>
 
       <Header extra={<AudioToggle />} />
@@ -255,6 +274,10 @@ export default function Landing() {
           </button>
         ))}
       </nav>
+
+      <div className={`journey-progress${pastJourney ? " hidden" : ""}`} aria-hidden="true">
+        <b>{progressLabel}</b><div><i style={{ transform: `scaleX(${progress})` }} /></div><span>{Math.round(progress * 100).toString().padStart(2, "0")}</span>
+      </div>
 
       <div id="journey-track" />
       <div id="capabilities"><FeatureStack /></div>
