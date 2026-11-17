@@ -74,7 +74,7 @@ export default function AudioToggle() {
       <span className="audio-bars" aria-hidden="true">
         <i /><i /><i />
       </span>
-      <span className="desktop-only">{playing ? "Music on" : "Music off"}</span>
+      <span className="desktop-only">{playing ? "Sound on" : "Sound off"}</span>
     </button>
   );
 }

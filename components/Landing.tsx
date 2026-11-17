@@ -55,7 +55,6 @@ const JOURNEY_CARDS: JourneyCard[] = [
   {
     from: 0.37,
     to: 0.485,
-    align: "right",
     content: (
       <>
         <CardKicker left="II · REBATE" right="PERM FEE ONLY" />
@@ -85,7 +84,6 @@ const JOURNEY_CARDS: JourneyCard[] = [
   {
     from: 0.63,
     to: 0.745,
-    align: "right",
     content: (
       <>
         <CardKicker left="IV · HOOKS" right="VERIFIED ONLY" />
