@@ -20,11 +20,11 @@ const CHECKS = [
 
 export default function DocsPage() {
   return (
-    <main className="app-page docs-page">
+    <main className="app-page docs-page light-app">
       <Header extra={<AudioToggle />} />
       <div className="app-aurora docs-aurora" aria-hidden="true"><i /><i /><i /></div>
 
-      <div className="docs-shell">
+      <div className="docs-shell app-enter">
         <aside className="docs-nav">
           <span>PROTOCOL NOTES</span>
           <a href="#overview">Overview</a>
