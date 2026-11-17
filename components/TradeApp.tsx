@@ -1,40 +1,44 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import Header from "./Header";
 import AudioToggle from "./AudioToggle";
 import Footer from "./Footer";
+import TokenLogo from "./TokenLogo";
+import { TOKENS, TOKEN_MAP, type TokenSymbol } from "@/lib/tokens";
 
 type RouteMode = "best" | "v4";
-type Token = "ETH" | "USDC";
+type PickerSide = "sell" | "buy" | null;
 
 type Route = {
   name: string;
   kind: string;
-  rate: number;
+  factor: number;
   gas: string;
   hook?: boolean;
   verified?: boolean;
 };
 
 const ROUTES: Route[] = [
-  { name: "V4 Aggregator Hook", kind: "Verified candidate", rate: 3092.72, gas: "$6.12 est.", hook: true, verified: true },
-  { name: "Uniswap V3", kind: "Direct venue", rate: 3088.54, gas: "$4.84 est." },
-  { name: "Uniswap V2", kind: "Direct venue", rate: 3079.81, gas: "$4.31 est." },
+  { name: "V4 Aggregator Hook", kind: "Verified-candidate fixture", factor: 1, gas: "$6.12 est.", hook: true, verified: true },
+  { name: "Uniswap V3", kind: "Direct-venue fixture", factor: 0.9982, gas: "$4.84 est." },
+  { name: "Uniswap V2", kind: "Direct-venue fixture", factor: 0.9954, gas: "$4.31 est." },
 ];
 
-const symbol = (token: Token) => token === "ETH" ? "Ξ" : "$";
-const decimals = (token: Token) => token === "ETH" ? 6 : 2;
-
 export default function TradeApp() {
-  const [sellToken, setSellToken] = useState<Token>("ETH");
+  const [sellSymbol, setSellSymbol] = useState<TokenSymbol>("ETH");
+  const [buySymbol, setBuySymbol] = useState<TokenSymbol>("USDC");
   const [amount, setAmount] = useState("0.60");
   const [mode, setMode] = useState<RouteMode>("best");
   const [slippage, setSlippage] = useState(0.5);
   const [details, setDetails] = useState(true);
   const [walletModal, setWalletModal] = useState(false);
-  const buyToken: Token = sellToken === "ETH" ? "USDC" : "ETH";
+  const [picker, setPicker] = useState<PickerSide>(null);
+  const [tokenSearch, setTokenSearch] = useState("");
+
+  const sellToken = TOKEN_MAP[sellSymbol];
+  const buyToken = TOKEN_MAP[buySymbol];
 
   const quote = useMemo(() => {
     const input = Math.max(0, Number.parseFloat(amount) || 0);
@@ -42,37 +46,70 @@ export default function TradeApp() {
     const rebate = grossFee * 0.25;
     const netFee = grossFee - rebate;
     const routedInput = Math.max(0, input - netFee);
-    const candidates = (mode === "v4" ? ROUTES.filter((route) => route.hook) : ROUTES).map((route) => {
-      const output = sellToken === "ETH" ? routedInput * route.rate : routedInput / route.rate;
-      return { ...route, output };
-    });
+    const idealOutput = buyToken.usdFixture > 0 ? routedInput * sellToken.usdFixture / buyToken.usdFixture : 0;
+    const candidates = (mode === "v4" ? ROUTES.filter((route) => route.hook) : ROUTES).map((route) => ({
+      ...route,
+      output: idealOutput * route.factor,
+    }));
     const selected = [...candidates].sort((a, b) => b.output - a.output)[0];
     const minReceived = (selected?.output || 0) * (1 - slippage / 100);
     return { input, grossFee, rebate, netFee, routedInput, candidates, selected, minReceived };
-  }, [amount, mode, sellToken, slippage]);
+  }, [amount, mode, sellToken, buyToken, slippage]);
 
-  const format = (value: number, token: Token) =>
-    value.toLocaleString("en-US", { maximumFractionDigits: decimals(token), minimumFractionDigits: value > 0 ? Math.min(2, decimals(token)) : 0 });
-
-  const flip = () => {
-    setSellToken(buyToken);
-    if (quote.selected?.output) setAmount(format(quote.selected.output, buyToken).replace(/,/g, ""));
+  const format = (value: number, symbol: TokenSymbol) => {
+    const token = TOKEN_MAP[symbol];
+    const max = value >= 1000 ? 2 : value >= 1 ? Math.min(4, token.decimals) : token.decimals;
+    return value.toLocaleString("en-US", { maximumFractionDigits: max, minimumFractionDigits: value > 0 && value < 10 ? Math.min(2, max) : 0 });
   };
 
-  return (
-    <main className="app-page trade-page">
-      <Header extra={<AudioToggle />} />
-      <div className="app-aurora" aria-hidden="true"><i /><i /><i /></div>
+  const flip = () => {
+    setSellSymbol(buySymbol);
+    setBuySymbol(sellSymbol);
+    if (quote.selected?.output) setAmount(format(quote.selected.output, buySymbol).replace(/,/g, ""));
+  };
 
-      <section className="trade-shell">
+  const openPicker = (side: Exclude<PickerSide, null>) => {
+    setTokenSearch("");
+    setPicker(side);
+  };
+
+  const chooseToken = (symbol: TokenSymbol) => {
+    if (picker === "sell") {
+      if (symbol === buySymbol) setBuySymbol(sellSymbol);
+      setSellSymbol(symbol);
+    }
+    if (picker === "buy") {
+      if (symbol === sellSymbol) setSellSymbol(buySymbol);
+      setBuySymbol(symbol);
+    }
+    setPicker(null);
+  };
+
+  const filteredTokens = TOKENS.filter((token) => `${token.symbol} ${token.name}`.toLowerCase().includes(tokenSearch.toLowerCase()));
+  const quoteKey = `${sellSymbol}-${buySymbol}-${amount}-${mode}-${slippage}`;
+
+  return (
+    <main className="app-page trade-page light-app">
+      <Header extra={<AudioToggle />} />
+      <div className="app-aurora" aria-hidden="true"><i /><i /><i /><b /><b /></div>
+
+      <section className="trade-shell app-enter">
         <div className="trade-intro">
           <span className="section-kicker">PERM ROUTER · INTERFACE PREVIEW</span>
-          <h1>The route is only good if the numbers are clear.</h1>
-          <p>Compare indicative whole-route candidates, inspect the fee rebate, and keep the user&apos;s minimum visible through confirmation.</p>
+          <h1>Every route, compared.</h1>
+          <p>Compare whole-route fixtures on one basis, inspect the Perm fee rebate, and keep minimum received visible through confirmation.</p>
           <div className="intro-points">
             <span><i>01</i> Same quote basis</span>
             <span><i>02</i> Fee discount shown</span>
             <span><i>03</i> Settlement proof</span>
+          </div>
+        </div>
+
+        <div className="token-marquee" aria-label="Illustrative token interface fixtures">
+          <div>
+            {[...TOKENS, ...TOKENS].map((token, index) => (
+              <span key={`${token.symbol}-${index}`}><TokenLogo symbol={token.symbol} size={21} /><b>{token.symbol}</b><small>${token.usdFixture.toLocaleString("en-US", { maximumFractionDigits: 2 })}</small></span>
+            ))}
           </div>
         </div>
 
@@ -95,9 +132,7 @@ export default function TradeApp() {
               <button type="button" className={mode === "v4" ? "active" : ""} onClick={() => setMode("v4")}>V4-only test</button>
             </div>
 
-            {mode === "v4" && (
-              <div className="mode-warning">V4-only is an explicit test mode. It can reduce route coverage and is not the default.</div>
-            )}
+            {mode === "v4" && <div className="mode-warning">V4-only is an explicit test mode. It can reduce route coverage and is not the default.</div>}
 
             <label className="token-box">
               <span className="token-box-label">YOU PAY</span>
@@ -106,24 +141,24 @@ export default function TradeApp() {
                   value={amount}
                   inputMode="decimal"
                   onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
-                  aria-label={`Amount in ${sellToken}`}
+                  aria-label={`Amount in ${sellSymbol}`}
                   placeholder="0.0"
                 />
-                <button className="token-chip" type="button" aria-label={`Selected token ${sellToken}`}>
-                  <i className={sellToken.toLowerCase()}>{symbol(sellToken)}</i>{sellToken}<span>⌄</span>
+                <button className="token-chip" type="button" onClick={() => openPicker("sell")} aria-expanded={picker === "sell"} aria-label={`Choose pay token, current ${sellSymbol}`}>
+                  <TokenLogo symbol={sellSymbol} size={29} />{sellSymbol}<span>⌄</span>
                 </button>
               </div>
-              <div className="token-sub"><span>Balance —</span><button type="button" onClick={() => setAmount(sellToken === "ETH" ? "1.00" : "3000")}>MAX</button></div>
+              <div className="token-sub"><span>Fixture value ≈ ${(quote.input * sellToken.usdFixture).toLocaleString("en-US", { maximumFractionDigits: 2 })}</span><button type="button" onClick={() => setAmount(sellSymbol === "WBTC" ? "0.10" : sellToken.usdFixture > 100 ? "1.00" : "1000")}>MAX</button></div>
             </label>
 
-            <div className="flip-row"><button type="button" onClick={flip} aria-label="Reverse tokens">↓↑</button></div>
+            <div className="flip-row"><button type="button" onClick={flip} aria-label="Reverse tokens"><span>↓</span><span>↑</span></button></div>
 
             <div className="token-box output-box">
               <span className="token-box-label">YOU RECEIVE · ESTIMATE</span>
               <div className="token-row">
-                <output>{format(quote.selected?.output || 0, buyToken)}</output>
-                <button className="token-chip" type="button" aria-label={`Selected token ${buyToken}`}>
-                  <i className={buyToken.toLowerCase()}>{symbol(buyToken)}</i>{buyToken}<span>⌄</span>
+                <output key={quoteKey} className="quote-value">{format(quote.selected?.output || 0, buySymbol)}</output>
+                <button className="token-chip" type="button" onClick={() => openPicker("buy")} aria-expanded={picker === "buy"} aria-label={`Choose receive token, current ${buySymbol}`}>
+                  <TokenLogo symbol={buySymbol} size={29} />{buySymbol}<span>⌄</span>
                 </button>
               </div>
               <div className="token-sub"><span>{quote.selected?.name || "No route"}</span><span>indicative</span></div>
@@ -135,10 +170,10 @@ export default function TradeApp() {
 
             {details && (
               <div className="fee-breakdown">
-                <div><span>Platform fee <small>gross</small></span><b>{format(quote.grossFee, sellToken)} {sellToken}</b></div>
-                <div className="rebate-line"><span>Fee rebate <small>25% share</small></span><b>−{format(quote.rebate, sellToken)} {sellToken}</b></div>
-                <div><span>Net platform fee</span><b>{format(quote.netFee, sellToken)} {sellToken}</b></div>
-                <div><span>Minimum received <small>{slippage}% slippage</small></span><b>{format(quote.minReceived, buyToken)} {buyToken}</b></div>
+                <div><span>Platform fee <small>gross</small></span><b>{format(quote.grossFee, sellSymbol)} {sellSymbol}</b></div>
+                <div className="rebate-line"><span>Fee rebate <small>25% share</small></span><b>−{format(quote.rebate, sellSymbol)} {sellSymbol}</b></div>
+                <div><span>Net platform fee</span><b>{format(quote.netFee, sellSymbol)} {sellSymbol}</b></div>
+                <div><span>Minimum received <small>{slippage}% slippage</small></span><b>{format(quote.minReceived, buySymbol)} {buySymbol}</b></div>
                 <div><span>Network fee</span><b>{quote.selected?.gas || "—"}</b></div>
                 <div><span>Fee policy</span><b><code>demo-v1</code></b></div>
               </div>
@@ -150,7 +185,24 @@ export default function TradeApp() {
             </div>
 
             <button className="connect-action" type="button" onClick={() => setWalletModal(true)}>Connect wallet</button>
-            <p className="swap-note">No wallet request is made in this preview. Execution requires verified Perm contracts, provider integration, simulation, and deployment configuration.</p>
+            <p className="swap-note">Token marks and values are interface fixtures. They do not assert Robinhood Chain availability, executable liquidity, or live pricing.</p>
+
+            {picker && (
+              <div className="token-picker-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}>
+                <section className="token-picker" role="dialog" aria-modal="true" aria-labelledby="token-picker-title">
+                  <header><div><span className="section-kicker">TOKEN FIXTURES</span><h3 id="token-picker-title">Choose a token</h3></div><button type="button" onClick={() => setPicker(null)} aria-label="Close token selector">×</button></header>
+                  <label className="token-search"><span>⌕</span><input autoFocus value={tokenSearch} onChange={(event) => setTokenSearch(event.target.value)} placeholder="Search name or symbol" /></label>
+                  <div className="popular-tokens">{TOKENS.slice(0, 5).map((token) => <button key={token.symbol} type="button" onClick={() => chooseToken(token.symbol)}><TokenLogo symbol={token.symbol} size={22} />{token.symbol}</button>)}</div>
+                  <div className="token-list">
+                    {filteredTokens.map((token) => {
+                      const current = picker === "sell" ? sellSymbol === token.symbol : buySymbol === token.symbol;
+                      return <button key={token.symbol} type="button" className={current ? "active" : ""} onClick={() => chooseToken(token.symbol)}><TokenLogo symbol={token.symbol} size={34} /><span><b>{token.symbol}</b><small>{token.name}</small></span><em>{token.category}</em>{current && <i>✓</i>}</button>;
+                    })}
+                  </div>
+                  <p>Official token marks are shown for recognition only. Route support must be verified per chain and deployment.</p>
+                </section>
+              </div>
+            )}
           </section>
 
           <aside className="route-panel glass-panel" aria-label="Route comparison">
@@ -159,18 +211,20 @@ export default function TradeApp() {
               <span className="fresh-chip"><i /> FRESH</span>
             </header>
 
+            <div className="pair-context"><span><TokenLogo symbol={sellSymbol} size={25} /><TokenLogo symbol={buySymbol} size={25} /></span><div><b>{sellSymbol} → {buySymbol}</b><small>illustrative comparison</small></div><em>{quote.candidates.length} routes</em></div>
+
             <div className="route-list">
               {quote.candidates.map((route, index) => {
                 const selected = route.name === quote.selected?.name;
                 return (
-                  <article className={`candidate${selected ? " selected" : ""}`} key={route.name}>
+                  <article className={`candidate${selected ? " selected" : ""}`} key={route.name} style={{ "--row-delay": `${index * 80}ms` } as CSSProperties}>
                     <div className="candidate-rank">{selected ? "✓" : String(index + 1).padStart(2, "0")}</div>
                     <div className="candidate-main">
-                      <div><h3>{route.name}</h3>{route.verified && <span className="verified-chip">VERIFIED</span>}</div>
+                      <div><h3>{route.name}</h3>{route.verified && <span className="verified-chip">VERIFIED FIXTURE</span>}</div>
                       <p>{route.kind}{route.hook ? " · pool-bound callback" : " · no Perm hook claim"}</p>
-                      <div className="route-path"><span>{sellToken}</span><i /><em>{route.hook ? "HOOK" : route.name.replace("Uniswap ", "")}</em><i /><span>{buyToken}</span></div>
+                      <div className="route-path"><TokenLogo symbol={sellSymbol} size={17} /><i /><em>{route.hook ? "HOOK" : route.name.replace("Uniswap ", "")}</em><i /><TokenLogo symbol={buySymbol} size={17} /></div>
                     </div>
-                    <div className="candidate-output"><b>{format(route.output, buyToken)}</b><span>{buyToken}</span><small>{route.gas}</small></div>
+                    <div className="candidate-output"><b>{format(route.output, buySymbol)}</b><span>{buySymbol}</span><small>{route.gas}</small></div>
                   </article>
                 );
               })}
@@ -192,14 +246,14 @@ export default function TradeApp() {
         </div>
       </section>
 
-      <section className="trade-explainer">
+      <section className="trade-explainer app-reveal">
         <div><span className="section-kicker">WHAT THIS PREVIEW PROVES</span><h2>The fee method and route story can be made legible now.</h2></div>
         <div className="explainer-grid">
-          <article><b>01</b><h3>Input-basis accounting</h3><p>The routed input reflects the net Perm fee after rebate. The quote and settlement must use the same method.</p></article>
+          <article><b>01</b><h3>Input-basis accounting</h3><p>The routed input reflects the net Perm fee after rebate. Quote and settlement must use the same method.</p></article>
           <article><b>02</b><h3>Route-neutral rebate</h3><p>An eligible V2 or V3 route can still receive the router-level discount. It does not need a custom Perm hook.</p></article>
           <article><b>03</b><h3>No invented coverage</h3><p>A hook candidate disappears when deployment, quote, spender, execution target, or freshness checks fail.</p></article>
         </div>
-        <Link href="/docs" className="button secondary">Review the implementation notes</Link>
+        <Link href="/routes" className="button secondary">Explore route fixtures</Link>
       </section>
 
       <div className="footer-shell app-footer"><Footer /></div>
