@@ -12,14 +12,55 @@ export const v4QuoterAbi = parseAbi([
   "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)",
 ]);
 
+export const v3FactoryAbi = parseAbi([
+  "function getPool(address tokenA,address tokenB,uint24 fee) view returns (address pool)",
+]);
+
+export const v3QuoterAbi = parseAbi([
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
+]);
+
+export const permV4AdapterAbi = parseAbi([
+  "function verifiedHooks(address hook) view returns (bool)",
+  "function verifiedHookCodehashes(address hook) view returns (bytes32)",
+  "function poolManager() view returns (address)",
+  "function permRouter() view returns (address)",
+]);
+
+export const permV3AdapterAbi = parseAbi([
+  "function permRouter() view returns (address)",
+  "function swapRouter() view returns (address)",
+  "function weth() view returns (address)",
+  "function swapRouterCodehash() view returns (bytes32)",
+  "function wethCodehash() view returns (bytes32)",
+]);
+
 export const permRouterAbi = parseAbi([
-  "function swapExactInput((address adapter,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request) payable returns (bytes32 receiptId,(uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint256 treasuryFee,uint256 routedInput,uint256 amountOut) settled)",
-  "function quoteIdFor(address account,(address adapter,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request) pure returns (bytes32)",
+  "function swapExactInput((address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request,bytes quoteSignature,(uint256 nonce,uint256 deadline,bytes signature) permitInput) payable returns (bytes32 receiptId,(uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint256 treasuryFee,uint256 routedInput,uint256 amountOut) settled)",
+  "function quoteIdFor(address account,(address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request) view returns (bytes32)",
   "function previewFees(uint256 amountIn,uint32 policyVersion) view returns (uint256 grossFee,uint256 rebate,uint256 netFee,uint256 routedInput)",
+  "function activePolicyVersion() view returns (uint32)",
   "function feePolicies(uint32 version) view returns (uint16 platformFeeBps,uint16 rebateShareBps,bool enabled,bool exists)",
   "function adapters(address adapter) view returns (bool enabled,bytes32 providerId)",
+  "function hookProviderIds(address adapter) view returns (bytes32 providerId)",
+  "function configureHookProvider(address adapter,bytes32 providerId)",
+  "function quoteSigner() view returns (address)",
+  "function pauseGuardian() view returns (address)",
+  "function setPauseGuardian(address newGuardian)",
+  "function permit2() view returns (address)",
   "function treasury() view returns (address)",
+  "function claimableFees(address token,address beneficiary) view returns (uint256)",
+  "function claimFees(address token,address recipient) returns (uint256 amount)",
   "function configureAdapter(address adapter,bytes32 providerId,bool enabled)",
   "function owner() view returns (address)",
+  "event RouteStepSettled(bytes32 indexed receiptId,uint8 indexed stepIndex,bytes32 indexed providerId,address adapter,address tokenIn,address tokenOut,uint256 amountIn,uint256 amountOut,bytes32 stepRouteId,address hook,bytes32 hookCodehash)",
+  "event SwapSettled(bytes32 indexed receiptId,bytes32 indexed quoteId,address indexed account,address recipient,address tokenIn,address tokenOut,uint256 amountIn,uint256 routedInput,uint256 amountOut,uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint256 treasuryFee,uint32 policyVersion,bytes32 routeId,bytes32 routeHash)",
+]);
+
+export const permRouterV1Abi = parseAbi([
   "event SwapSettled(bytes32 indexed receiptId,bytes32 indexed quoteId,address indexed account,address recipient,address tokenIn,address tokenOut,uint256 amountIn,uint256 routedInput,uint256 amountOut,uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint32 policyVersion,bytes32 providerId,address adapter,address hook)",
+]);
+
+export const permit2Abi = parseAbi([
+  "function permitTransferFrom(((address token,uint256 amount) permitted,uint256 nonce,uint256 deadline) permit,(address to,uint256 requestedAmount) transferDetails,address owner,bytes signature)",
 ]);
