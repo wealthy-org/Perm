@@ -9,7 +9,7 @@ export default function Footer() {
           <span>PERM</span>
         </Link>
         <p>Compare supported routes. See every fee. Keep more of your swap.</p>
-        <div className="footer-status"><i /> Interface preview · execution not yet enabled</div>
+        <div className="footer-status"><i /> Contracts tested · <Link href="/setup">owner-signed testnet setup</Link></div>
       </div>
 
       <div className="footer-links">
@@ -23,6 +23,7 @@ export default function Footer() {
         <div>
           <h4>BUILD</h4>
           <Link href="/docs">Protocol notes</Link>
+          <Link href="/setup">Testnet setup</Link>
           <a href="https://github.com/wealthy-org/Perm" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
           <a href="https://developers.uniswap.org/docs/protocols/v4/concepts/hooks" target="_blank" rel="noopener noreferrer">Uniswap v4 hooks ↗</a>
         </div>

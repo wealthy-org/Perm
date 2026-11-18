@@ -9,13 +9,13 @@ export const metadata: Metadata = {
 };
 
 const CHECKS = [
-  "Quote and execution use the same fee basis, rounding, and rebate policy.",
-  "Zero fee, zero or 100% rebate, dust, referral sharing, wrapping, and allowance cases are tested.",
-  "Minimum output is based on the recipient's actual balance after all applicable deductions.",
-  "Fee and rebate state rolls back on revert; failed trades create no reward.",
-  "Dynamic spenders and call targets are rejected unless reviewed and explicitly allowed.",
-  "Missing or malicious hooks, reentrancy, stale quotes, and additional gas are handled.",
-  "Proof covers one actual hook route and one non-hook route receiving the router-level rebate.",
+  { done: true, text: "Quote and execution use the same input-fee basis, integer rounding, and immutable policy version." },
+  { done: true, text: "Zero fee, zero or 100% rebate, dust, referral sharing, native wrapping, and exact allowance cases are covered by contract tests." },
+  { done: true, text: "Minimum output is enforced against the amount actually delivered to the recipient." },
+  { done: true, text: "Fee, rebate, quote consumption, and receipt state roll back on revert; failed trades create no reward." },
+  { done: true, text: "Only owner-approved adapters can execute; the v4 adapter targets one immutable PoolManager and clears exact approvals." },
+  { done: true, text: "Unknown hooks and non-empty hook calldata are rejected; reentrancy, deadlines, and 120-second quote freshness are enforced." },
+  { done: false, text: "Release evidence still needs one verified Aggregator Hook settlement on chain 46630; no official testnet candidate is currently verified." },
 ];
 
 export default function DocsPage() {
@@ -28,6 +28,7 @@ export default function DocsPage() {
         <aside className="docs-nav">
           <span>PROTOCOL NOTES</span>
           <a href="#overview">Overview</a>
+          <a href="#implementation">Implementation</a>
           <a href="#routing">Routing flow</a>
           <a href="#hooks">Hook boundary</a>
           <a href="#rebate">Fee rebate</a>
@@ -37,13 +38,24 @@ export default function DocsPage() {
         </aside>
 
         <article className="docs-content">
-          <div className="docs-status"><i /> Recommendation dated 17 November 2026 · implementation module, not a full deployed-protocol specification</div>
+          <div className="docs-status"><i /> Implementation dated 17 November 2026 · contracts compiled, unit-tested, and exercised against a Robinhood testnet fork</div>
 
           <header id="overview" className="docs-hero">
             <span className="section-kicker">PERM · DIFFERENTIATION V4</span>
             <h1>Routing that can use verified hooks. A platform fee that visibly comes down.</h1>
             <p>Perm keeps the multi-venue router baseline, then adds hook-aware route candidates and a settlement-time rebate funded from Perm&apos;s own platform fee.</p>
           </header>
+
+          <section id="implementation" className="docs-section">
+            <span className="section-kicker">IMPLEMENTED TESTNET PATH</span>
+            <h2>Real contracts, real V4 state, no invented deployment.</h2>
+            <div className="decision-grid">
+              <article><span>01</span><h3>PermRouter</h3><p>Exact-input settlement, immutable versioned fee policies, recipient minimum, quote replay protection, pause control, referral conservation, and event-backed receipts.</p></article>
+              <article><span>02</span><h3>Restricted V4 adapter</h3><p>One immutable PoolManager, one exact-input pool per candidate, full-spend enforcement, empty hook data, explicit hook allowlist, and no arbitrary target or calldata.</p></article>
+            </div>
+            <div className="docs-callout"><b>Verified on chain state:</b> the adapter test executes ETH → NVDA test asset and the reverse direction against the deployed PoolManager on a Robinhood Chain testnet fork. The public deployment still requires an owner wallet signature and testnet gas.</div>
+            <div className="docs-callout warning"><b>Coverage boundary:</b> chain 46630 has a verified Uniswap v4 deployment, but the reviewed V2/V3 addresses used on mainnet have no bytecode there. The interface reports those candidates unavailable instead of fabricating multi-venue coverage.</div>
+          </section>
 
           <section className="docs-section">
             <h2>Product decision</h2>
@@ -97,7 +109,7 @@ netPermFee  = grossPermFee − rebate
               <div className="green"><small>REBATE</small><b>0.05 USDG</b></div><i>=</i>
               <div><small>NET PERM FEE</small><b>0.15 USDG</b></div>
             </div>
-            <p className="docs-caption">The 0.20% fee and 25% rebate share are fixtures only. They are not final commercial policy.</p>
+            <p className="docs-caption">Policy v1 is fixed at a 0.20% gross Perm fee and a 25% rebate share of that fee, producing a 0.15% net Perm fee.</p>
             <ul className="docs-list">
               <li>Rebate cannot exceed the gross Perm fee. A zero gross fee creates a zero rebate in this design.</li>
               <li>Referral, integrator, treasury, and rebate shares cannot spend the same portion twice.</li>
@@ -119,7 +131,7 @@ netPermFee  = grossPermFee − rebate
             <span className="section-kicker">RELEASE GATE</span>
             <h2>Acceptance checklist</h2>
             <div className="acceptance-list">
-              {CHECKS.map((check) => <label key={check}><input type="checkbox" disabled /><span>{check}</span></label>)}
+              {CHECKS.map((check) => <label key={check.text} className={check.done ? "complete" : "pending"}><input type="checkbox" checked={check.done} readOnly disabled /><span>{check.text}</span><em>{check.done ? "PASS" : "RELEASE GATE"}</em></label>)}
             </div>
             <div className="docs-callout"><b>Positioning after implementation:</b> “Compare routes. See every fee. Keep more of your swap.” Avoid guarantees of cheapest execution, profit, MEV immunity, or universal hook coverage.</div>
           </section>

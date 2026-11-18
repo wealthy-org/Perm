@@ -1,0 +1,26 @@
+{
+  "network": "Robinhood Chain Testnet",
+  "chainId": 46630,
+  "rpcUrl": "https://rpc.testnet.chain.robinhood.com",
+  "explorerUrl": "https://explorer.testnet.chain.robinhood.com",
+  "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+  "v4Quoter": "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  "permRouter": "0x3e350b79D4983a0e86Ad4eE25dB1DBBbfB55114d",
+  "v4Adapter": "0xC4Df49493a828F681160056cb6D46143B56593D0",
+  "owner": "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8",
+  "treasury": "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8",
+  "policy": {
+    "version": 1,
+    "platformFeeBps": 20,
+    "rebateShareBps": 2500
+  },
+  "deploymentBlock": 154833178,
+  "ownershipStatus": "accepted",
+  "deploymentTransactions": [
+    "0x1654e9dc382f6e1e743302d0e2ca19dcddc129ddfb65a2a39a9d051794e94daf",
+    "0xd8a418addfb4f9aef8d8271a02d75deb8590d49f810fa81f92a033f649867c80",
+    "0x0ded432bd75ce8637b99b6349c7c641db65e3e3c0f1e05a458fe4782305cceeb"
+  ],
+  "generatedAt": "2026-11-18T05:24:12.278Z",
+  "source": "browser-wallet"
+}

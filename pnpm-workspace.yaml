@@ -1,0 +1,4 @@
+minimumReleaseAgeExclude:
+  - viem@2.58.0
+allowBuilds:
+  keccak: true

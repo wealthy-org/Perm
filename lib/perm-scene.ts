@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { Reflector } from "three/addons/objects/Reflector.js";
 
 export type SceneStop = { n: string; label: string; p: number; a: number };
 export type SceneController = {
@@ -178,27 +177,21 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   });
 
   // ---------- water ----------
-  let reflector: Reflector | null = null;
-  if (!mobile) {
-    reflector = new Reflector(new THREE.PlaneGeometry(1800, 1800), {
-      clipBias: 0.003,
-      textureWidth: Math.round(innerWidth * dpr * 0.42),
-      textureHeight: Math.round(innerHeight * dpr * 0.42),
-      color: 0x527d94,
-      multisample: 0,
-    });
-    reflector.rotation.x = -Math.PI / 2;
-    reflector.position.set(0, -0.05, -100);
-    scene.add(reflector);
-  } else {
-    const waterBase = new THREE.Mesh(
-      new THREE.PlaneGeometry(1600, 1600),
-      new THREE.MeshStandardMaterial({ color: 0x6b9ab4, roughness: 0.24, metalness: 0.24 }),
-    );
-    waterBase.rotation.x = -Math.PI / 2;
-    waterBase.position.set(0, -0.06, -100);
-    scene.add(waterBase);
-  }
+  // A fog-aware physical surface avoids the dark grazing-angle seam produced
+  // by planar reflection render targets at the opening horizon.
+  const waterBase = new THREE.Mesh(
+    new THREE.PlaneGeometry(5000, 5000),
+    new THREE.MeshPhysicalMaterial({
+      color: 0x8bb9c9,
+      roughness: 0.3,
+      metalness: 0.08,
+      clearcoat: 0.58,
+      clearcoatRoughness: 0.2,
+    }),
+  );
+  waterBase.rotation.x = -Math.PI / 2;
+  waterBase.position.set(0, -0.06, -100);
+  scene.add(waterBase);
 
   const waterOverlayMaterial = new THREE.ShaderMaterial({
     transparent: true,
@@ -230,7 +223,7 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
       }
     `,
   });
-  const waterOverlay = new THREE.Mesh(new THREE.PlaneGeometry(1750, 1750), waterOverlayMaterial);
+  const waterOverlay = new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000), waterOverlayMaterial);
   waterOverlay.rotation.x = -Math.PI / 2;
   waterOverlay.position.set(0, 0.015, -100);
   scene.add(waterOverlay);
@@ -678,7 +671,6 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
     camera.aspect = innerWidth / innerHeight;
     camera.fov = innerWidth / innerHeight < 0.78 ? 61 : 46;
     camera.updateProjectionMatrix();
-    if (reflector) reflector.getRenderTarget().setSize(Math.round(innerWidth * dpr * 0.42), Math.round(innerHeight * dpr * 0.42));
   };
   addEventListener("pointermove", onPointer, { passive: true });
   addEventListener("resize", resize, { passive: true });
@@ -726,7 +718,6 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
         materials.forEach((material) => material?.dispose?.());
       });
       textures.forEach((texture) => texture.dispose());
-      reflector?.getRenderTarget().dispose();
       renderer.dispose();
     },
   };

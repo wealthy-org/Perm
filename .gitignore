@@ -6,3 +6,8 @@ out/
 .DS_Store
 *.log
 *.tsbuildinfo
+.hardhat-cache/
+contracts/artifacts/
+coverage/
+playwright-report/
+test-results/

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import Web3Provider from "@/components/Web3Provider";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://useperm.xyz";
 
@@ -53,7 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
         />
-        {children}
+        <Web3Provider>{children}</Web3Provider>
       </body>
     </html>
   );

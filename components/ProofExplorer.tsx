@@ -1,38 +1,114 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { formatUnits, isHash, type Address, type Hex } from "viem";
 import Header from "./Header";
 import AudioToggle from "./AudioToggle";
 import Footer from "./Footer";
-import TokenLogo, { TokenPair } from "./TokenLogo";
-import type { TokenSymbol } from "@/lib/tokens";
+import LiveTokenMark from "./LiveTokenMark";
+import { LIVE_TOKEN_BY_ADDRESS, LIVE_TOKEN_MAP, type LiveToken } from "@/lib/web3/tokens";
+import { ZERO_ADDRESS } from "@/lib/web3/config";
+import { usePermDeployment } from "@/lib/web3/local-deployment";
 
-type Receipt = {
-  id: string;
-  sell: TokenSymbol;
-  buy: TokenSymbol;
-  input: string;
-  output: string;
-  route: string;
-  hook: boolean;
-  gross: string;
+type OnchainReceipt = {
+  chainId: number;
+  transactionHash: Hex;
+  blockNumber: string;
+  blockTimestamp: number;
+  logIndex: number;
+  status: string;
+  confirmations: string;
+  gasUsed: string;
+  actualNetworkFeeWei: string;
+  actualNetworkFeeEth: string;
+  receiptId: Hex;
+  quoteId: Hex;
+  account: Address;
+  recipient: Address;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: string;
+  routedInput: string;
+  amountOut: string;
+  grossFee: string;
   rebate: string;
-  net: string;
-  gas: string;
+  netFee: string;
+  referralFee: string;
+  policyVersion: number;
+  providerId: Hex;
+  providerLabel: string;
+  adapter: Address;
+  hook: Address;
+  explorerUrl: string;
 };
 
-const RECEIPTS: Receipt[] = [
-  { id: "DEMO-91AE", sell: "ETH", buy: "USDC", input: "0.600000 ETH", output: "1,851.88 USDC", route: "V4 Aggregator Hook fixture", hook: true, gross: "0.001200 ETH", rebate: "0.000300 ETH", net: "0.000900 ETH", gas: "$6.12" },
-  { id: "DEMO-73C4", sell: "WBTC", buy: "USDC", input: "0.10000000 WBTC", output: "9,009.14 USDC", route: "Uniswap V3 fixture", hook: false, gross: "0.00020000 WBTC", rebate: "0.00005000 WBTC", net: "0.00015000 WBTC", gas: "$5.26" },
-  { id: "DEMO-52BF", sell: "USDT", buy: "USDC", input: "2,500.00 USDT", output: "2,493.51 USDC", route: "Uniswap V3 fixture", hook: false, gross: "5.00 USDT", rebate: "1.25 USDT", net: "3.75 USDT", gas: "$4.35" },
-  { id: "DEMO-18D2", sell: "LINK", buy: "WETH", input: "100.00000 LINK", output: "0.47716 WETH", route: "Uniswap V2 fixture", hook: false, gross: "0.20000 LINK", rebate: "0.05000 LINK", net: "0.15000 LINK", gas: "$4.13" },
-];
+type ReceiptResult = { receipt?: OnchainReceipt; error?: string; hash: string };
 
 export default function ProofExplorer() {
+  const deployment = usePermDeployment();
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(RECEIPTS[0].id);
-  const filtered = useMemo(() => RECEIPTS.filter((receipt) => `${receipt.id} ${receipt.sell} ${receipt.buy} ${receipt.route}`.toLowerCase().includes(query.toLowerCase())), [query]);
-  const selected = RECEIPTS.find((receipt) => receipt.id === selectedId) || RECEIPTS[0];
+  const [manualHash, setManualHash] = useState("");
+  const [results, setResults] = useState<ReceiptResult[]>([]);
+  const [selectedHash, setSelectedHash] = useState<string>();
+  const [loading, setLoading] = useState(true);
+
+  const loadHashes = useCallback(async (hashes: string[]) => {
+    const unique = [...new Set(hashes.filter((hash) => isHash(hash)))].slice(0, 30);
+    if (!unique.length) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    const next = await Promise.all(unique.map(async (hash): Promise<ReceiptResult> => {
+      try {
+        const params = new URLSearchParams({ tx: hash });
+        if (deployment.router) params.set("router", deployment.router);
+        const response = await fetch(`/api/receipts?${params}`, { cache: "no-store" });
+        const data = await response.json() as OnchainReceipt & { error?: string };
+        if (!response.ok) throw new Error(data.error || "Receipt unavailable");
+        return { hash, receipt: data };
+      } catch (cause) {
+        return { hash, error: cause instanceof Error ? cause.message : "Receipt unavailable" };
+      }
+    }));
+    setResults(next);
+    const firstValid = next.find((item) => item.receipt)?.hash;
+    setSelectedHash((current) => current && next.some((item) => item.hash === current) ? current : firstValid);
+    setLoading(false);
+  }, [deployment.router]);
+
+  useEffect(() => {
+    const hashes = JSON.parse(localStorage.getItem("perm:receipts") || "[]") as string[];
+    void loadHashes(hashes);
+  }, [loadHashes]);
+
+  const addManual = () => {
+    if (!isHash(manualHash)) return;
+    const existing = JSON.parse(localStorage.getItem("perm:receipts") || "[]") as string[];
+    const next = [manualHash, ...existing.filter((hash) => hash.toLowerCase() !== manualHash.toLowerCase())].slice(0, 30);
+    localStorage.setItem("perm:receipts", JSON.stringify(next));
+    setManualHash("");
+    void loadHashes(next);
+  };
+
+  const filtered = useMemo(() => results.filter(({ receipt, hash }) => {
+    if (!query) return true;
+    const haystack = receipt ? `${hash} ${receipt.receiptId} ${receipt.account} ${receipt.recipient} ${receipt.providerLabel}` : hash;
+    return haystack.toLowerCase().includes(query.toLowerCase());
+  }), [results, query]);
+  const selected = results.find((item) => item.hash === selectedHash)?.receipt;
+
+  const tokenFor = (address: Address): LiveToken => LIVE_TOKEN_BY_ADDRESS[address.toLowerCase()] || {
+    symbol: "ETH", displaySymbol: "TOKEN", name: "Unknown token", address, decimals: 18, color: "#64748b",
+  };
+  const inputToken = selected ? tokenFor(selected.tokenIn) : LIVE_TOKEN_MAP.ETH;
+  const outputToken = selected ? tokenFor(selected.tokenOut) : LIVE_TOKEN_MAP.NVDA;
+  const fmt = (raw: string, token: LiveToken) => {
+    const [whole, fraction] = formatUnits(BigInt(raw), token.decimals).split(".");
+    const groupedWhole = BigInt(whole).toLocaleString("en-US");
+    return fraction ? `${groupedWhole}.${fraction}` : groupedWhole;
+  };
 
   return (
     <main className="app-page light-app proofs-page">
@@ -41,53 +117,62 @@ export default function ProofExplorer() {
 
       <section className="data-shell app-enter">
         <header className="data-hero">
-          <span className="section-kicker">SETTLEMENT PROOF · INTERFACE PREVIEW</span>
-          <h1>Every result leaves a readable receipt.</h1>
-          <p>Route identity, actual amounts, fee accounting, recipient, policy version, transaction evidence, and gas belong in one verifiable record.</p>
-          <div className="data-disclaimer"><i /> Demonstration records only · no transaction or wallet activity is implied</div>
+          <span className="section-kicker">SETTLEMENT PROOF · ROBINHOOD CHAIN TESTNET</span>
+          <h1>A receipt only after the chain settles.</h1>
+          <p>Every record is decoded from a successful Perm SwapSettled log and bound to its transaction hash, block, log index, recipient, route identity, and actual fee accounting.</p>
+          <div className="data-disclaimer"><i /> No successful event means no receipt and no rebate claim</div>
         </header>
 
         <section className="proof-workbench data-panel">
           <div className="proof-list-panel">
-            <header><div><span className="section-kicker">DEMO RECEIPTS</span><h2>Settlement records</h2></div><span className="proof-count">{filtered.length.toString().padStart(2, "0")}</span></header>
-            <label className="proof-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search demo ID, token, or route" /></label>
+            <header><div><span className="section-kicker">EVENT-BACKED RECEIPTS</span><h2>Settlement records</h2></div><span className="proof-count">{filtered.filter((item) => item.receipt).length.toString().padStart(2, "0")}</span></header>
+            <label className="proof-search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tx, receipt, or account" /></label>
+            <div className="manual-receipt"><input value={manualHash} onChange={(event) => setManualHash(event.target.value.trim())} placeholder="Paste a Perm transaction hash" /><button type="button" onClick={addManual} disabled={!isHash(manualHash)}>Verify</button></div>
             <div className="proof-list">
-              {filtered.map((receipt, index) => (
-                <button type="button" key={receipt.id} className={selected.id === receipt.id ? "active" : ""} onClick={() => setSelectedId(receipt.id)} style={{ "--row-delay": `${index * 70}ms` } as CSSProperties}>
-                  <TokenPair first={receipt.sell} second={receipt.buy} size={30} />
-                  <span><b>{receipt.sell} → {receipt.buy}</b><small>{receipt.route}</small></span>
-                  <em>{receipt.id}</em><i>✓</i>
-                </button>
-              ))}
-              {!filtered.length && <div className="proof-empty">No demonstration record matches this search.</div>}
+              {filtered.map((item, index) => {
+                const receipt = item.receipt;
+                const first = receipt ? tokenFor(receipt.tokenIn) : LIVE_TOKEN_MAP.ETH;
+                const second = receipt ? tokenFor(receipt.tokenOut) : LIVE_TOKEN_MAP.NVDA;
+                return (
+                  <button type="button" key={item.hash} className={selectedHash === item.hash ? "active" : ""} onClick={() => receipt && setSelectedHash(item.hash)} style={{ "--row-delay": `${index * 70}ms` } as CSSProperties} disabled={!receipt}>
+                    <span className="live-pair"><LiveTokenMark token={first} size={30} /><LiveTokenMark token={second} size={30} /></span>
+                    <span><b>{receipt ? `${first.displaySymbol} → ${second.displaySymbol}` : "Unverified transaction"}</b><small>{receipt ? receipt.providerLabel : item.error}</small></span>
+                    <em>{receipt ? `${receipt.transactionHash.slice(0, 8)}…` : "INVALID"}</em>{receipt && <i>✓</i>}
+                  </button>
+                );
+              })}
+              {loading && <div className="proof-empty">Reading transaction receipts from chain 46630…</div>}
+              {!loading && !filtered.length && <div className="proof-empty">No event-backed receipt is saved in this browser yet. Execute a testnet swap or paste its transaction hash above.</div>}
             </div>
           </div>
 
-          <article className="proof-document" key={selected.id}>
-            <header><div className="proof-mark"><img src="/perm-mark.png" alt="" /></div><div><span>PERM SETTLEMENT RECEIPT</span><b>{selected.id}</b></div><em><i /> SETTLED FIXTURE</em></header>
-            <div className="proof-pair"><TokenLogo symbol={selected.sell} size={46} /><span><i /><i /><i /></span><TokenLogo symbol={selected.buy} size={46} /><div><b>{selected.sell} → {selected.buy}</b><small>{selected.route}</small></div></div>
-            <dl>
-              <div><dt>Actual input</dt><dd>{selected.input}</dd></div>
-              <div><dt>Actual output</dt><dd>{selected.output}</dd></div>
-              <div><dt>Gross Perm fee</dt><dd>{selected.gross}</dd></div>
-              <div className="proof-saved"><dt>Fee rebate</dt><dd>−{selected.rebate}</dd></div>
-              <div><dt>Net Perm fee</dt><dd>{selected.net}</dd></div>
-              <div><dt>Network fee</dt><dd>{selected.gas}</dd></div>
-              <div><dt>Hook execution</dt><dd>{selected.hook ? "Required only if selected pool is used" : "No hook claim"}</dd></div>
-              <div><dt>Policy version</dt><dd><code>demo-v1</code></dd></div>
-            </dl>
-            <div className="proof-hash"><span>TRANSACTION EVIDENCE</span><code>Not available in interface fixture</code></div>
-            <footer><span><i /> Policy-bound fields</span><span><i /> Recipient-bound output</span><span><i /> Event-backed in production</span></footer>
-            <div className="proof-scan" />
-          </article>
+          {selected ? (
+            <article className="proof-document" key={selected.receiptId}>
+              <header><div className="proof-mark"><img src="/perm-mark.png" alt="" /></div><div><span>PERM SETTLEMENT RECEIPT</span><b>{selected.receiptId.slice(0, 12)}…{selected.receiptId.slice(-6)}</b></div><em><i /> ONCHAIN</em></header>
+              <div className="proof-pair"><LiveTokenMark token={inputToken} size={46} /><span><i /><i /><i /></span><LiveTokenMark token={outputToken} size={46} /><div><b>{inputToken.displaySymbol} → {outputToken.displaySymbol}</b><small>{selected.providerLabel}</small></div></div>
+              <dl>
+                <div><dt>Actual input</dt><dd>{fmt(selected.amountIn, inputToken)} {inputToken.displaySymbol}</dd></div>
+                <div><dt>Routed input</dt><dd>{fmt(selected.routedInput, inputToken)} {inputToken.displaySymbol}</dd></div>
+                <div><dt>Actual recipient output</dt><dd>{fmt(selected.amountOut, outputToken)} {outputToken.displaySymbol}</dd></div>
+                <div><dt>Gross Perm fee</dt><dd>{fmt(selected.grossFee, inputToken)} {inputToken.displaySymbol}</dd></div>
+                <div className="proof-saved"><dt>Fee rebate</dt><dd>−{fmt(selected.rebate, inputToken)} {inputToken.displaySymbol}</dd></div>
+                <div><dt>Net Perm fee</dt><dd>{fmt(selected.netFee, inputToken)} {inputToken.displaySymbol}</dd></div>
+                <div><dt>Actual network fee</dt><dd>{selected.actualNetworkFeeEth} ETH</dd></div>
+                <div><dt>Hook execution</dt><dd>{selected.hook === ZERO_ADDRESS ? "No hook claim" : selected.hook}</dd></div>
+                <div><dt>Policy version</dt><dd><code>perm-v{selected.policyVersion}</code></dd></div>
+                <div><dt>Recipient</dt><dd><code>{selected.recipient.slice(0, 8)}…{selected.recipient.slice(-6)}</code></dd></div>
+              </dl>
+              <div className="proof-hash"><span>TRANSACTION + LOG IDENTITY</span><a href={selected.explorerUrl} target="_blank" rel="noopener noreferrer"><code>{selected.transactionHash.slice(0, 18)}…{selected.transactionHash.slice(-12)} · log {selected.logIndex}</code></a></div>
+              <footer><span><i /> Chain {selected.chainId}</span><span><i /> Block {selected.blockNumber}</span><span><i /> {selected.confirmations} confirmations</span></footer>
+              <div className="proof-scan" />
+            </article>
+          ) : (
+            <article className="proof-document proof-document-empty"><img src="/perm-mark.png" alt="" /><span className="section-kicker">NO FABRICATED PROOF</span><h2>{deployment.router ? "Execute or verify a transaction" : "Publish the testnet deployment first"}</h2><p>Perm does not substitute demonstration records when no settlement event exists.</p></article>
+          )}
         </section>
 
-        <section className="logic-band app-reveal">
-          <div><span className="section-kicker">PROOF, NOT PROMISE</span><h2>The record follows settlement.</h2></div>
-          <ol><li><b>01</b><span>The quote is not presented as the final result.</span></li><li><b>02</b><span>Actual recipient output is measured after execution.</span></li><li><b>03</b><span>Failed or reverted trades create no rebate receipt.</span></li></ol>
-        </section>
+        <section className="logic-band app-reveal"><div><span className="section-kicker">PROOF, NOT PROMISE</span><h2>The record follows settlement.</h2></div><ol><li><b>01</b><span>The quote is not presented as the final result.</span></li><li><b>02</b><span>Actual recipient output is emitted only after the minimum is enforced.</span></li><li><b>03</b><span>Failed or reverted trades create no fee distribution or receipt.</span></li></ol></section>
       </section>
-
       <div className="footer-shell app-footer"><Footer /></div>
     </main>
   );

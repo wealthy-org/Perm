@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { shortAddress, useWeb3 } from "./Web3Provider";
 
 const NAV = [
   ["/trade", "Trade"],
@@ -19,10 +20,12 @@ const MENU = [
   ["/rebate", "Fee rebate", "03"],
   ["/proofs", "Settlement proof", "04"],
   ["/docs", "Protocol notes", "05"],
+  ["/setup", "Testnet setup", "06"],
 ] as const;
 
 export default function Header({ extra }: { extra?: ReactNode }) {
   const path = usePathname();
+  const { account, connecting, error, isCorrectChain, connect, disconnect, switchNetwork } = useWeb3();
   const [open, setOpen] = useState(false);
   const [solid, setSolid] = useState(false);
   const menuRef = useRef<HTMLElement>(null);
@@ -92,10 +95,22 @@ export default function Header({ extra }: { extra?: ReactNode }) {
             </svg>
           </a>
           {extra}
-          <span className="network-pill" aria-label="Initial network target: Robinhood Chain">
-            <i aria-hidden="true" /><span>Robinhood</span><small>⌄</small>
-          </span>
-          <Link className="header-cta" href="/trade">Connect</Link>
+          <button
+            className={`network-pill${account && !isCorrectChain ? " wrong-network" : ""}`}
+            type="button"
+            onClick={() => account && !isCorrectChain ? void switchNetwork().catch(() => undefined) : undefined}
+            aria-label={isCorrectChain ? "Connected to Robinhood Chain Testnet" : "Switch to Robinhood Chain Testnet"}
+          >
+            <i aria-hidden="true" /><span>{account && !isCorrectChain ? "Wrong network" : "RH Testnet"}</span><small>⌄</small>
+          </button>
+          <button
+            className="header-cta"
+            type="button"
+            onClick={() => account ? disconnect() : void connect().catch(() => undefined)}
+            title={error || (account ? "Disconnect this interface session" : "Connect an EVM wallet")}
+          >
+            {connecting ? "Connecting…" : shortAddress(account)}
+          </button>
           <button
             ref={menuButton}
             className="icon-button menu-trigger"
