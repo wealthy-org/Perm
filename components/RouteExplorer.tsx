@@ -7,87 +7,101 @@ import AudioToggle from "./AudioToggle";
 import Footer from "./Footer";
 import LiveTokenMark from "./LiveTokenMark";
 import { LIVE_TOKENS, LIVE_TOKEN_MAP, type LiveTokenSymbol } from "@/lib/web3/tokens";
-import type { LiveQuote } from "@/lib/web3/quote";
-import { RH_TESTNET_EXPLORER } from "@/lib/web3/config";
+import type { LiveQuote, LiveQuoteCandidate } from "@/lib/web3/quote";
+import { RH_TESTNET_EXPLORER, ZERO_ADDRESS } from "@/lib/web3/config";
 
-type Filter = "all" | "direct" | "hook";
-const ASSETS = LIVE_TOKENS.filter((token) => token.symbol !== "ETH");
+type Filter = "all" | "v4" | "v3" | "multi" | "hook";
 
 export default function RouteExplorer() {
   const [filter, setFilter] = useState<Filter>("all");
-  const [selected, setSelected] = useState<LiveTokenSymbol>("NVDA");
+  const [sellSymbol, setSellSymbol] = useState<LiveTokenSymbol>("NVDA");
+  const [buySymbol, setBuySymbol] = useState<LiveTokenSymbol>("AAPL");
   const [amount, setAmount] = useState("0.001");
-  const [quotes, setQuotes] = useState<Partial<Record<LiveTokenSymbol, LiveQuote>>>({});
-  const [errors, setErrors] = useState<Partial<Record<LiveTokenSymbol, string>>>({});
+  const [quote, setQuote] = useState<LiveQuote>();
+  const [selectedRoute, setSelectedRoute] = useState<string>();
+  const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number>();
+  const inputToken = LIVE_TOKEN_MAP[sellSymbol];
+  const outputToken = LIVE_TOKEN_MAP[buySymbol];
 
   const refresh = useCallback(async () => {
     let raw: bigint;
     try {
-      raw = parseUnits(amount || "0", 18);
+      raw = parseUnits(amount || "0", inputToken.decimals);
       if (raw <= 0n) throw new Error("Amount must be positive");
     } catch {
-      setErrors({ NVDA: "Enter a valid ETH amount" });
+      setError(`Enter a valid ${inputToken.displaySymbol} amount`);
       return;
     }
     setLoading(true);
-    const results = await Promise.all(ASSETS.map(async (token) => {
-      try {
-        const response = await fetch("/api/quote", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ tokenIn: "ETH", tokenOut: token.symbol, amountIn: raw.toString(), slippageBps: 50 }),
-          cache: "no-store",
-        });
-        const data = await response.json() as LiveQuote & { error?: string };
-        if (!response.ok) throw new Error(data.error || "Quote unavailable");
-        return [token.symbol, data, undefined] as const;
-      } catch (cause) {
-        return [token.symbol, undefined, cause instanceof Error ? cause.message : "Quote unavailable"] as const;
-      }
-    }));
-    const nextQuotes: Partial<Record<LiveTokenSymbol, LiveQuote>> = {};
-    const nextErrors: Partial<Record<LiveTokenSymbol, string>> = {};
-    results.forEach(([symbol, quote, quoteError]) => {
-      if (quote) nextQuotes[symbol] = quote;
-      if (quoteError) nextErrors[symbol] = quoteError;
-    });
-    setQuotes(nextQuotes);
-    setErrors(nextErrors);
-    setUpdatedAt(Date.now());
-    setLoading(false);
-  }, [amount]);
+    setError(undefined);
+    setQuote(undefined);
+    try {
+      const response = await fetch("/api/quote", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tokenIn: sellSymbol,
+          tokenOut: buySymbol,
+          amountIn: raw.toString(),
+          slippageBps: 50,
+          routingMode: filter === "hook" ? "hooks" : filter === "v4" ? "v4" : filter === "v3" ? "v3" : "best",
+        }),
+        cache: "no-store",
+      });
+      const data = await response.json() as LiveQuote & { error?: string };
+      if (!response.ok) throw new Error(data.error || "Quote unavailable");
+      setQuote(data);
+      setSelectedRoute(data.selected.routeId);
+      setUpdatedAt(Date.now());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Quote unavailable");
+    } finally {
+      setLoading(false);
+    }
+  }, [amount, inputToken.decimals, inputToken.displaySymbol, sellSymbol, buySymbol, filter]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 250);
+    const timer = window.setTimeout(() => void refresh(), 300);
     return () => window.clearTimeout(timer);
   }, [refresh]);
 
-  const rows = useMemo(() => ASSETS.map((token) => ({ token, quote: quotes[token.symbol], error: errors[token.symbol] }))
-    .filter(({ quote }) => filter !== "hook" || quote?.selected.verifiedHook)
-    .filter(({ quote }) => filter !== "direct" || !quote?.selected.verifiedHook), [quotes, errors, filter]);
-  const active = quotes[selected];
-  const eth = LIVE_TOKEN_MAP.ETH;
-  const output = LIVE_TOKEN_MAP[selected];
-  const fmt = (raw?: string) => raw ? Number(formatUnits(BigInt(raw), 18)).toLocaleString("en-US", { maximumFractionDigits: 7 }) : "—";
+  const candidates = useMemo(() => (quote?.candidates || []).filter((candidate) => {
+    if (filter === "v3") return candidate.steps.some((step) => step.providerId === "SYNTHRA_V3");
+    if (filter === "multi") return candidate.steps.length > 1;
+    if (filter === "hook") return candidate.verifiedHook;
+    if (filter === "v4") return candidate.steps.every((step) => step.providerId.startsWith("UNISWAP_V4"));
+    return true;
+  }), [quote, filter]);
+  const active = candidates.find((candidate) => candidate.routeId === selectedRoute) || candidates[0];
+  const fmt = (raw?: string) => raw ? Number(formatUnits(BigInt(raw), outputToken.decimals)).toLocaleString("en-US", { maximumFractionDigits: 7 }) : "—";
+  const inputFmt = (raw?: string) => raw ? Number(formatUnits(BigInt(raw), inputToken.decimals)).toLocaleString("en-US", { maximumFractionDigits: 7 }) : "—";
+
+  const chooseSell = (symbol: LiveTokenSymbol) => {
+    setSellSymbol(symbol);
+    if (symbol === buySymbol) setBuySymbol(symbol === "ETH" ? "NVDA" : "ETH");
+  };
+  const chooseBuy = (symbol: LiveTokenSymbol) => {
+    setBuySymbol(symbol);
+    if (symbol === sellSymbol) setSellSymbol(symbol === "ETH" ? "NVDA" : "ETH");
+  };
 
   return (
     <main className="app-page light-app routes-page">
       <Header extra={<AudioToggle />} />
       <div className="app-aurora" aria-hidden="true"><i /><i /><i /><b /><b /></div>
-
       <section className="data-shell app-enter">
         <header className="data-hero">
-          <span className="section-kicker">ROUTE EXPLORER · LIVE CHAIN 46630 READS</span>
-          <h1>Only candidates the quoter can prove.</h1>
-          <p>Every row below is requested from the deployed Robinhood testnet V4Quoter using the same amount, fee policy, block window, and slippage basis.</p>
-          <div className="data-disclaimer"><i /> Testnet assets have no monetary value · gas is not converted into output-token units</div>
+          <span className="section-kicker">MULTI-VENUE ROUTE EXPLORER · CHAIN 46630</span>
+          <h1>Compare the route, not the label.</h1>
+          <p>The same exact input is quoted across reviewed Uniswap v4 and Synthra v3 pools. Token-to-token paths may use two venue steps through ETH, and gas is normalized only when a valid conversion exists.</p>
+          <div className="data-disclaimer"><i /> Hook candidates remain unavailable unless deployment, runtime codehash, pool and quote all verify onchain</div>
         </header>
 
         <div className="metric-row">
-          <article><span>QUOTED PAIRS</span><b>{Object.keys(quotes).length}</b><small>currently valid</small></article>
-          <article><span>VERIFIED TYPES</span><b>V4</b><small>direct pools on testnet</small></article>
+          <article><span>VALID ROUTES</span><b>{quote?.candidates.length || 0}</b><small>same amount + policy</small></article>
+          <article><span>VENUES OBSERVED</span><b>{quote ? new Set(quote.candidates.flatMap((candidate) => candidate.steps.map((step) => step.providerId))).size : 0}</b><small>not a marketing count</small></article>
           <article><span>FRESHNESS</span><b>{loading ? "…" : updatedAt ? "Live" : "—"}</b><small>{updatedAt ? new Date(updatedAt).toLocaleTimeString() : "awaiting RPC"}</small></article>
         </div>
 
@@ -95,53 +109,64 @@ export default function RouteExplorer() {
           <header className="catalog-head">
             <div><span className="section-kicker">ONCHAIN CANDIDATE CATALOG</span><h2>Route quotes</h2></div>
             <div className="route-live-controls">
-              <label><span>ETH input</span><input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" /></label>
+              <label><span>Input</span><input value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" /></label>
+              <label><span>From</span><select value={sellSymbol} onChange={(event) => chooseSell(event.target.value as LiveTokenSymbol)}>{LIVE_TOKENS.map((token) => <option key={token.symbol} value={token.symbol}>{token.displaySymbol}</option>)}</select></label>
+              <label><span>To</span><select value={buySymbol} onChange={(event) => chooseBuy(event.target.value as LiveTokenSymbol)}>{LIVE_TOKENS.map((token) => <option key={token.symbol} value={token.symbol}>{token.displaySymbol}</option>)}</select></label>
               <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Reading…" : "Refresh"}</button>
             </div>
             <div className="catalog-tabs" role="tablist" aria-label="Route type filter">
-              {(["all", "direct", "hook"] as Filter[]).map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "direct" ? "Direct pools" : "Verified hooks"}</button>)}
+              {(["all", "v4", "v3", "multi", "hook"] as Filter[]).map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "multi" ? "Multi-hop" : item === "hook" ? "Verified hooks" : item.toUpperCase()}</button>)}
             </div>
           </header>
 
           <div className="catalog-layout">
             <div className="route-table" role="table" aria-label="Live route candidates">
               <div className="route-table-head" role="row"><span>PAIR</span><span>ROUTE</span><span>LIVE OUTPUT</span><span>GAS EST.</span><span>TYPE</span></div>
-              {rows.map(({ token, quote, error }, index) => (
-                <button className={`route-table-row${token.symbol === selected ? " selected" : ""}`} type="button" key={token.symbol} onClick={() => setSelected(token.symbol)} style={{ "--row-delay": `${index * 45}ms` } as CSSProperties}>
-                  <span className="pair-cell"><span className="live-pair"><LiveTokenMark token={eth} size={27} /><LiveTokenMark token={token} size={27} /></span><b>ETH/{token.displaySymbol}</b></span>
-                  <span><b>{quote?.selected.providerLabel || "Unavailable"}</b><small>{quote ? `block ${quote.blockNumber}` : error || "No valid quote"}</small></span>
-                  <span className="mono-cell">{quote ? `${fmt(quote.selected.amountOut)} ${token.displaySymbol}` : "—"}</span>
-                  <span className="mono-cell">{quote ? `${Number(formatEther(BigInt(quote.selected.estimatedNetworkFeeWei))).toPrecision(3)} ETH` : "—"}</span>
-                  <span><em className={`route-type ${quote?.selected.verifiedHook ? "hook" : "direct"}`}>{quote?.selected.verifiedHook ? "VERIFIED HOOK" : "V4 DIRECT"}</em></span>
-                </button>
-              ))}
-              {!rows.length && <div className="route-filter-empty">No verified hook candidate is available on Robinhood Chain testnet. Perm correctly reports it as unavailable.</div>}
+              {candidates.map((candidate, index) => <RouteRow key={candidate.routeId} candidate={candidate} index={index} active={candidate.routeId === active?.routeId} onSelect={() => setSelectedRoute(candidate.routeId)} input={inputToken} output={outputToken} fmt={fmt} />)}
+              {!candidates.length && <div className="route-filter-empty">{loading ? "Reading verified quoters…" : error || "No candidate passes this filter. Unavailable coverage is not fabricated."}</div>}
             </div>
 
-            {active ? (
-              <aside className="route-inspector" key={active.quoteId}>
-                <span className="section-kicker">SELECTED ONCHAIN QUOTE</span>
-                <div className="inspector-pair"><LiveTokenMark token={eth} size={42} /><i>→</i><LiveTokenMark token={output} size={42} /></div>
-                <h3>ETH to {output.displaySymbol}</h3>
-                <p>{active.selected.providerLabel}</p>
-                <div className="inspector-path"><span>INPUT</span><i /><em>{active.selected.hook === "0x0000000000000000000000000000000000000000" ? "DIRECT V4 POOL" : "VERIFIED HOOK"}</em><i /><span>OUTPUT</span></div>
-                <dl>
-                  <div><dt>Live result</dt><dd>{fmt(active.selected.amountOut)} {output.displaySymbol}</dd></div>
-                  <div><dt>Minimum received</dt><dd>{fmt(active.selected.minAmountOut)} {output.displaySymbol}</dd></div>
-                  <div><dt>Net Perm fee</dt><dd>{fmt(active.netFee)} ETH</dd></div>
-                  <div><dt>Pool fee</dt><dd>{active.selected.pool.fee / 10_000}%</dd></div>
-                  <div><dt>Hook claim</dt><dd>{active.selected.verifiedHook ? active.selected.hook : "None"}</dd></div>
-                </dl>
-                <a href={`${RH_TESTNET_EXPLORER}/address/${active.selected.pool.hooks === "0x0000000000000000000000000000000000000000" ? "0x8366a39cc670b4001a1121b8f6a443a643e40951" : active.selected.pool.hooks}`} target="_blank" rel="noopener noreferrer">Inspect deployment ↗</a>
-                <small>The selected transaction still simulates immediately before the user signs. A stale or reverting quote is rejected.</small>
-              </aside>
-            ) : <aside className="route-inspector"><span className="section-kicker">NO VALID QUOTE</span><h3>{errors[selected] || "Reading the V4Quoter…"}</h3></aside>}
+            {active ? <aside className="route-inspector" key={active.routeId}>
+              <span className="section-kicker">SELECTED ROUTE</span>
+              <div className="inspector-pair"><LiveTokenMark token={inputToken} size={42} /><i>→</i><LiveTokenMark token={outputToken} size={42} /></div>
+              <h3>{inputToken.displaySymbol} to {outputToken.displaySymbol}</h3><p>{active.providerLabel}</p>
+              <div className="inspector-path"><span>INPUT</span><i /><em>{active.routeKind.toUpperCase()}</em><i /><span>OUTPUT</span></div>
+              <dl>
+                <div><dt>Live result</dt><dd>{fmt(active.amountOut)} {outputToken.displaySymbol}</dd></div>
+                <div><dt>Minimum received</dt><dd>{fmt(active.minAmountOut)} {outputToken.displaySymbol}</dd></div>
+                <div><dt>Net Perm fee</dt><dd>{inputFmt(quote?.netFee)} {inputToken.displaySymbol}</dd></div>
+                <div><dt>Gas-adjusted result</dt><dd>{active.gasAdjustedOutput ? `${fmt(active.gasAdjustedOutput)} ${outputToken.displaySymbol}` : "gas separate"}</dd></div>
+                <div><dt>Price impact</dt><dd>{active.priceImpactBps === undefined ? "unavailable" : `${(active.priceImpactBps / 100).toFixed(2)}%`}</dd></div>
+                <div><dt>Hook claim</dt><dd>{active.verifiedHook ? active.hook : "None"}</dd></div>
+              </dl>
+              <section className="inspector-steps">{active.steps.map((step, index) => <div key={`${active.routeId}-${index}`}><b>{index + 1}. {step.providerLabel}</b><span>{step.tokenIn === ZERO_ADDRESS ? "ETH" : `${step.tokenIn.slice(0, 6)}…`} → {step.tokenOut === ZERO_ADDRESS ? "ETH" : `${step.tokenOut.slice(0, 6)}…`}</span><small>pool {step.poolId.slice(0, 12)}… · {step.poolFee / 10_000}%</small></div>)}</section>
+              <a href={`${RH_TESTNET_EXPLORER}/address/${active.steps[0].adapter}`} target="_blank" rel="noopener noreferrer">Inspect adapter ↗</a>
+              <small>The trade page requests an account-bound EIP-712 signature and simulates this exact route immediately before submission.</small>
+            </aside> : <aside className="route-inspector"><span className="section-kicker">NO VALID QUOTE</span><h3>{error || "Reading verified quoters…"}</h3></aside>}
           </div>
         </section>
 
-        <section className="logic-band app-reveal"><div><span className="section-kicker">SELECTION LOGIC</span><h2>A label never outranks the result.</h2></div><ol><li><b>01</b><span>Apply the same exact input and versioned Perm fee policy.</span></li><li><b>02</b><span>Reject reverting, stale, unverified, or mismatched candidates.</span></li><li><b>03</b><span>Compare token output and expose unconverted gas independently.</span></li></ol></section>
+        <section className="logic-band app-reveal"><div><span className="section-kicker">SELECTION LOGIC</span><h2>Net result wins when units match.</h2></div><ol><li><b>01</b><span>Apply one input and the active onchain fee policy to every candidate.</span></li><li><b>02</b><span>Reject stale, reverting, unapproved-adapter, and codehash-mismatched hook routes.</span></li><li><b>03</b><span>Rank after estimated gas when ETH can be converted through the observed route.</span></li></ol></section>
       </section>
       <div className="footer-shell app-footer"><Footer /></div>
     </main>
   );
+}
+
+function RouteRow({ candidate, index, active, onSelect, input, output, fmt }: {
+  candidate: LiveQuoteCandidate;
+  index: number;
+  active: boolean;
+  onSelect: () => void;
+  input: typeof LIVE_TOKENS[number];
+  output: typeof LIVE_TOKENS[number];
+  fmt: (raw?: string) => string;
+}) {
+  return <button className={`route-table-row${active ? " selected" : ""}`} type="button" onClick={onSelect} style={{ "--row-delay": `${index * 45}ms` } as CSSProperties}>
+    <span className="pair-cell"><span className="live-pair"><LiveTokenMark token={input} size={27} /><LiveTokenMark token={output} size={27} /></span><b>{input.displaySymbol}/{output.displaySymbol}</b></span>
+    <span><b>{candidate.providerLabel}</b><small>{candidate.steps.length} step{candidate.steps.length > 1 ? "s" : ""} · {candidate.gasNormalized ? "gas normalized" : "gas separate"}</small></span>
+    <span className="mono-cell">{fmt(candidate.amountOut)} {output.displaySymbol}</span>
+    <span className="mono-cell">{Number(formatEther(BigInt(candidate.estimatedNetworkFeeWei))).toPrecision(3)} ETH</span>
+    <span><em className={`route-type ${candidate.verifiedHook ? "hook" : "direct"}`}>{candidate.routeKind.toUpperCase()}</em></span>
+  </button>;
 }

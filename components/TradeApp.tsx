@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import {
   formatEther,
   formatUnits,
   isAddress,
+  parseEther,
   parseUnits,
   type Address,
   type Hex,
@@ -17,6 +18,7 @@ import LiveTokenMark from "./LiveTokenMark";
 import { useWeb3 } from "./Web3Provider";
 import { erc20Abi, permRouterAbi } from "@/lib/web3/abis";
 import {
+  PERMIT2_ADDRESS,
   RH_TESTNET_CHAIN_ID,
   RH_TESTNET_EXPLORER,
   ZERO_ADDRESS,
@@ -32,7 +34,8 @@ import type { LiveQuote } from "@/lib/web3/quote";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
 
 type PickerSide = "sell" | "buy" | null;
-type TxStage = "idle" | "approving" | "simulating" | "submitting" | "confirming" | "success" | "error";
+type TxStage = "idle" | "approving" | "signing" | "simulating" | "submitting" | "confirming" | "success" | "error";
+type RoutingMode = "best" | "v4" | "v3" | "hooks";
 
 type TxStatus = {
   stage: TxStage;
@@ -42,6 +45,12 @@ type TxStatus = {
 
 const publicClient = getRobinhoodPublicClient();
 
+function randomPermitNonce() {
+  const words = new Uint32Array(8);
+  crypto.getRandomValues(words);
+  return BigInt(`0x${[...words].map((word) => word.toString(16).padStart(8, "0")).join("")}`);
+}
+
 export default function TradeApp() {
   const { account, isCorrectChain, connecting, connect, switchNetwork, walletClient } = useWeb3();
   const deployment = usePermDeployment();
@@ -49,6 +58,8 @@ export default function TradeApp() {
   const [buySymbol, setBuySymbol] = useState<LiveTokenSymbol>("NVDA");
   const [amount, setAmount] = useState("0.01");
   const [slippage, setSlippage] = useState(0.5);
+  const [routingMode, setRoutingMode] = useState<RoutingMode>("best");
+  const [preferPermit2, setPreferPermit2] = useState(true);
   const [details, setDetails] = useState(true);
   const [picker, setPicker] = useState<PickerSide>(null);
   const [tokenSearch, setTokenSearch] = useState("");
@@ -58,12 +69,16 @@ export default function TradeApp() {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteTick, setQuoteTick] = useState(0);
   const [balances, setBalances] = useState<Record<string, bigint>>({});
+  const [balanceAccount, setBalanceAccount] = useState<Address>();
+  const balanceRequest = useRef(0);
+  const pickerRef = useRef<HTMLElement>(null);
   const [tx, setTx] = useState<TxStatus>({ stage: "idle" });
 
   const sellToken = LIVE_TOKEN_MAP[sellSymbol];
   const buyToken = LIVE_TOKEN_MAP[buySymbol];
   const recipientAddress = recipient.trim() || account || "";
   const recipientValid = Boolean(recipientAddress && isAddress(recipientAddress));
+  const slippageBps = Math.round(slippage * 100);
 
   const parsedAmount = useMemo(() => {
     try {
@@ -75,12 +90,15 @@ export default function TradeApp() {
   }, [amount, sellToken.decimals]);
 
   const refreshBalances = useCallback(async () => {
+    const requestId = ++balanceRequest.current;
+    setBalanceAccount(undefined);
     if (!account) {
       setBalances({});
       return;
     }
     const next: Record<string, bigint> = {};
-    await Promise.all([sellToken, buyToken].map(async (token) => {
+    const balanceTokens = [...new Map([sellToken, buyToken, LIVE_TOKEN_MAP.ETH].map((token) => [token.symbol, token])).values()];
+    await Promise.all(balanceTokens.map(async (token) => {
       try {
         next[token.symbol] = token.address === ZERO_ADDRESS
           ? await publicClient.getBalance({ address: account })
@@ -89,7 +107,9 @@ export default function TradeApp() {
         next[token.symbol] = 0n;
       }
     }));
+    if (requestId !== balanceRequest.current) return;
     setBalances((current) => ({ ...current, ...next }));
+    setBalanceAccount(account);
   }, [account, sellToken, buyToken]);
 
   useEffect(() => {
@@ -102,15 +122,39 @@ export default function TradeApp() {
   }, []);
 
   useEffect(() => {
-    if (!parsedAmount) {
-      setQuote(undefined);
-      setQuoteError(undefined);
+    if (!picker) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPicker(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(pickerRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]),input:not([disabled])") || [])];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [picker]);
+
+  useEffect(() => {
+    setQuote(undefined);
+    setQuoteError(undefined);
+    if (!parsedAmount || slippageBps < 1 || slippageBps > 2_000) {
+      setQuoteLoading(false);
       return;
     }
+    setQuoteLoading(true);
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
-      setQuoteLoading(true);
-      setQuoteError(undefined);
       try {
         const response = await fetch("/api/quote", {
           method: "POST",
@@ -119,11 +163,11 @@ export default function TradeApp() {
             tokenIn: sellSymbol,
             tokenOut: buySymbol,
             amountIn: parsedAmount.toString(),
-            slippageBps: Math.round(slippage * 100),
+            slippageBps,
             account: account || ZERO_ADDRESS,
             recipient: recipientValid ? recipientAddress : ZERO_ADDRESS,
-            adapter: deployment.adapter || ZERO_ADDRESS,
             referrer: ZERO_ADDRESS,
+            routingMode,
           }),
           signal: controller.signal,
           cache: "no-store",
@@ -133,7 +177,6 @@ export default function TradeApp() {
         setQuote(data);
       } catch (cause) {
         if ((cause as { name?: string }).name !== "AbortError") {
-          setQuote(undefined);
           setQuoteError(cause instanceof Error ? cause.message : "Live quote failed");
         }
       } finally {
@@ -144,13 +187,37 @@ export default function TradeApp() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [sellSymbol, buySymbol, parsedAmount, slippage, quoteTick, account, recipientAddress, recipientValid, deployment.adapter]);
+  }, [sellSymbol, buySymbol, parsedAmount, slippageBps, routingMode, quoteTick, account, recipientAddress, recipientValid]);
+
+  const quoteMatchesInput = Boolean(
+    quote
+      && quote.amountIn === parsedAmount.toString()
+      && quote.tokenIn.toLowerCase() === sellToken.address.toLowerCase()
+      && quote.tokenOut.toLowerCase() === buyToken.address.toLowerCase()
+      && quote.slippageBps === slippageBps
+      && quote.routingMode === routingMode
+      && account && quote.account.toLowerCase() === account.toLowerCase()
+      && recipientValid && quote.recipient.toLowerCase() === recipientAddress.toLowerCase(),
+  );
+
+  const gasReserve = quote ? BigInt(quote.selected.estimatedNetworkFeeWei) * 5n / 4n : parseEther("0.00002");
+  const requiredNative = (sellToken.address === ZERO_ADDRESS ? parsedAmount : 0n) + gasReserve;
+  const sellBalance = balances[sellSymbol];
+  const nativeBalance = balances.ETH;
+  const balancesReady = Boolean(account && balanceAccount?.toLowerCase() === account.toLowerCase());
+  const tokenBalanceEnough = balancesReady && sellBalance !== undefined && sellBalance >= parsedAmount;
+  const gasBalanceEnough = balancesReady && nativeBalance !== undefined && nativeBalance >= requiredNative;
+  const balanceEnough = tokenBalanceEnough && gasBalanceEnough;
 
   const formatTokenAmount = (raw: string | bigint | undefined, token: LiveToken, maximum = 6) => {
     if (raw === undefined) return "—";
-    const value = Number(formatUnits(BigInt(raw), token.decimals));
-    if (!Number.isFinite(value)) return "—";
-    return value.toLocaleString("en-US", { maximumFractionDigits: maximum, minimumFractionDigits: value > 0 && value < 0.01 ? Math.min(6, maximum) : 0 });
+    const [whole = "0", fraction = ""] = formatUnits(BigInt(raw), token.decimals).split(".");
+    const grouped = BigInt(whole || "0").toLocaleString("en-US");
+    if (!fraction) return grouped;
+    const firstNonzero = fraction.search(/[1-9]/);
+    const end = whole === "0" && firstNonzero >= maximum ? Math.min(fraction.length, firstNonzero + 3) : maximum;
+    const visible = fraction.slice(0, end).replace(/0+$/, "");
+    return visible ? `${grouped}.${visible}` : grouped;
   };
 
   const formatExactTokenAmount = (raw: string | bigint | undefined, token: LiveToken) => {
@@ -168,10 +235,10 @@ export default function TradeApp() {
   const chooseToken = (symbol: LiveTokenSymbol) => {
     if (picker === "sell") {
       setSellSymbol(symbol);
-      if (symbol === buySymbol || (symbol !== "ETH" && buySymbol !== "ETH")) setBuySymbol(symbol === "ETH" ? "NVDA" : "ETH");
+      if (symbol === buySymbol) setBuySymbol(symbol === "ETH" ? "NVDA" : "ETH");
     } else if (picker === "buy") {
       setBuySymbol(symbol);
-      if (symbol === sellSymbol || (symbol !== "ETH" && sellSymbol !== "ETH")) setSellSymbol(symbol === "ETH" ? "NVDA" : "ETH");
+      if (symbol === sellSymbol) setSellSymbol(symbol === "ETH" ? "NVDA" : "ETH");
     }
     setPicker(null);
     setTx({ stage: "idle" });
@@ -184,27 +251,32 @@ export default function TradeApp() {
     setTx({ stage: "idle" });
   };
 
+  const setMax = () => {
+    const balance = balances[sellSymbol];
+    if (balance === undefined) return;
+    if (sellToken.address !== ZERO_ADDRESS) return setAmount(formatUnits(balance, sellToken.decimals));
+    const reserve = quote ? BigInt(quote.selected.estimatedNetworkFeeWei) * 3n / 2n : parseEther("0.00003");
+    setAmount(formatUnits(balance > reserve ? balance - reserve : 0n, sellToken.decimals));
+  };
+
   const filteredTokens = LIVE_TOKENS.filter((token) => `${token.symbol} ${token.name}`.toLowerCase().includes(tokenSearch.toLowerCase()));
+
+  const refreshAfterApproval = async (hash: Hex, message: string) => {
+    await publicClient.waitForTransactionReceipt({ hash });
+    setQuote(undefined);
+    setQuoteTick((value) => value + 1);
+    setTx({ stage: "success", hash, message: `${message} A fresh route is loading; review it and press Swap again.` });
+    await refreshBalances();
+  };
 
   const execute = async () => {
     if (!account) return void connect().catch((cause) => setTx({ stage: "error", message: cause instanceof Error ? cause.message : "Wallet connection failed" }));
     if (!isCorrectChain) return void switchNetwork().catch((cause) => setTx({ stage: "error", message: cause instanceof Error ? cause.message : "Network switch failed" }));
-    if (!quote || !deployment.router || !deployment.adapter || !recipientValid) return;
-    if (
-      quote.account.toLowerCase() !== account.toLowerCase()
-      || quote.recipient.toLowerCase() !== recipientAddress.toLowerCase()
-      || quote.adapter.toLowerCase() !== deployment.adapter.toLowerCase()
-    ) {
-      setTx({ stage: "error", message: "The account, recipient, or adapter changed. A fresh bound quote is being requested." });
-      setQuoteTick((value) => value + 1);
-      return;
-    }
+    if (!quote || !deployment.router || !recipientValid || !quoteMatchesInput || !quote.executable || !balanceEnough) return;
 
     try {
-      setTx({ stage: "simulating", message: "Validating quote and balances…" });
       const wallet = walletClient();
       const request = {
-        adapter: quote.adapter,
         tokenIn: quote.tokenIn,
         tokenOut: quote.tokenOut,
         amountIn: BigInt(quote.amountIn),
@@ -218,38 +290,70 @@ export default function TradeApp() {
         referrer: quote.referrer,
         routeData: quote.selected.routeData,
       } as const;
+      let permitInput = { nonce: 0n, deadline: 0n, signature: "0x" as Hex };
 
       if (quote.tokenIn !== ZERO_ADDRESS) {
-        const allowance = await publicClient.readContract({
-          address: quote.tokenIn,
-          abi: erc20Abi,
-          functionName: "allowance",
-          args: [account, deployment.router],
-        });
-        if (allowance < request.amountIn) {
-          setTx({ stage: "approving", message: `Approve exactly ${formatTokenAmount(request.amountIn, sellToken)} ${sellToken.displaySymbol}` });
+        const [routerAllowance, permitAllowance] = await Promise.all([
+          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, deployment.router] }),
+          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, deployment.permit2 || PERMIT2_ADDRESS] }),
+        ]);
+        if (preferPermit2 && permitAllowance >= request.amountIn) {
+          setTx({ stage: "signing", message: "Sign a one-trade Permit2 authorization. This is not an onchain transaction." });
+          const nonce = randomPermitNonce();
+          const deadline = BigInt(quote.deadline);
+          const signature = await wallet.signTypedData({
+            account,
+            domain: { name: "Permit2", chainId: RH_TESTNET_CHAIN_ID, verifyingContract: deployment.permit2 || PERMIT2_ADDRESS },
+            types: {
+              TokenPermissions: [
+                { name: "token", type: "address" },
+                { name: "amount", type: "uint256" },
+              ],
+              PermitTransferFrom: [
+                { name: "permitted", type: "TokenPermissions" },
+                { name: "spender", type: "address" },
+                { name: "nonce", type: "uint256" },
+                { name: "deadline", type: "uint256" },
+              ],
+            },
+            primaryType: "PermitTransferFrom",
+            message: {
+              permitted: { token: quote.tokenIn, amount: request.amountIn },
+              spender: deployment.router,
+              nonce,
+              deadline,
+            },
+          });
+          permitInput = { nonce, deadline, signature };
+        } else if (routerAllowance < request.amountIn) {
+          const spender = preferPermit2 ? (deployment.permit2 || PERMIT2_ADDRESS) : deployment.router;
+          setTx({ stage: "approving", message: `Approve exactly ${formatTokenAmount(request.amountIn, sellToken)} ${sellToken.displaySymbol} to ${preferPermit2 ? "Permit2" : "PermRouter"}` });
           const approval = await wallet.writeContract({
             account,
             chain: wallet.chain,
             address: quote.tokenIn,
             abi: erc20Abi,
             functionName: "approve",
-            args: [deployment.router, request.amountIn],
+            args: [spender, request.amountIn],
           });
-          await publicClient.waitForTransactionReceipt({ hash: approval });
+          await refreshAfterApproval(approval, "Exact approval confirmed.");
+          return;
         }
       }
 
       const latest = await publicClient.getBlock({ blockTag: "latest" });
-      if (latest.timestamp > BigInt(quote.deadline)) throw new Error("Quote expired during approval. A fresh quote is ready; confirm again.");
+      if (latest.timestamp > BigInt(quote.deadline)) {
+        setQuoteTick((value) => value + 1);
+        throw new Error("Quote expired. A fresh signed route is loading; confirm again.");
+      }
 
-      setTx({ stage: "simulating", message: "Simulating the exact bound route…" });
+      setTx({ stage: "simulating", message: "Simulating the exact signed multi-venue route…" });
       const simulation = await publicClient.simulateContract({
         account,
         address: deployment.router,
         abi: permRouterAbi,
         functionName: "swapExactInput",
-        args: [request],
+        args: [request, quote.quoteSignature, permitInput],
         value: quote.tokenIn === ZERO_ADDRESS ? request.amountIn : 0n,
       });
 
@@ -259,9 +363,14 @@ export default function TradeApp() {
       const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
       if (receipt.status !== "success") throw new Error("The transaction reverted; no fee or rebate receipt was created.");
 
-      const saved = JSON.parse(localStorage.getItem("perm:receipts") || "[]") as string[];
-      localStorage.setItem("perm:receipts", JSON.stringify([hash, ...saved.filter((item) => item !== hash)].slice(0, 30)));
-      setTx({ stage: "success", hash, message: "Settled onchain. The event-backed receipt is ready." });
+      try {
+        const stored = JSON.parse(localStorage.getItem("perm:receipts") || "[]");
+        const saved = Array.isArray(stored) ? stored.filter((item): item is string => typeof item === "string") : [];
+        localStorage.setItem("perm:receipts", JSON.stringify([hash, ...saved.filter((item) => item !== hash)].slice(0, 30)));
+      } catch {
+        try { localStorage.setItem("perm:receipts", JSON.stringify([hash])); } catch { /* Onchain success must not be relabeled as a UI failure. */ }
+      }
+      setTx({ stage: "success", hash, message: "Settled onchain. Every route step is now available in the proof." });
       await refreshBalances();
       setQuoteTick((value) => value + 1);
     } catch (cause) {
@@ -274,16 +383,24 @@ export default function TradeApp() {
     if (connecting) return "Connecting wallet…";
     if (!account) return "Connect wallet";
     if (!isCorrectChain) return "Switch to RH Testnet";
-    if (!deployment.ready) return "Deploy testnet contracts";
+    if (!deployment.ready) return "Deploy Router v2";
     if (!recipientValid) return "Enter a valid recipient";
-    if (quoteLoading) return "Reading V4Quoter…";
+    if (!balancesReady) return "Loading balances…";
+    if (!balanceEnough) return "Insufficient balance / gas";
+    if (quoteLoading) return "Comparing verified routes…";
     if (!quote) return quoteError ? "Route unavailable" : "Enter an amount";
-    if (["approving", "simulating", "submitting", "confirming"].includes(tx.stage)) return tx.message || "Working…";
-    return `Swap on RH Testnet`;
+    if (!quoteMatchesInput) return "Waiting for matching quote…";
+    if (!quote.executable) return "Signed execution unavailable";
+    if (["approving", "signing", "simulating", "submitting", "confirming"].includes(tx.stage)) return tx.message || "Working…";
+    return "Swap on RH Testnet";
   })();
 
-  const buttonDisabled = Boolean(account && isCorrectChain && (!deployment.ready || !quote || !recipientValid || quoteLoading || ["approving", "simulating", "submitting", "confirming"].includes(tx.stage)));
+  const buttonDisabled = Boolean(account && isCorrectChain && (
+    !deployment.ready || !quote || !quoteMatchesInput || !quote.executable || !recipientValid || !balanceEnough || quoteLoading
+    || ["approving", "signing", "simulating", "submitting", "confirming"].includes(tx.stage)
+  ));
   const quoteKey = quote?.quoteId || `${sellSymbol}-${buySymbol}-${amount}`;
+  const netFeeBps = quote ? quote.platformFeeBps * (10_000 - quote.rebateShareBps) / 10_000 : undefined;
 
   return (
     <main className="app-page trade-page light-app">
@@ -292,121 +409,97 @@ export default function TradeApp() {
 
       <section className="trade-shell app-enter">
         <div className="trade-intro">
-          <span className="section-kicker">PERM ROUTER · ROBINHOOD CHAIN TESTNET</span>
-          <h1>Live quotes. Bound execution.</h1>
-          <p>The interface reads the deployed Uniswap v4 Quoter, applies policy v1 on the same input basis, simulates the exact route, and records settlement from the router event.</p>
-          <div className="intro-points">
-            <span><i>01</i> Onchain V4 quote</span>
-            <span><i>02</i> 20 bps / 25% rebate</span>
-            <span><i>03</i> Event-backed proof</span>
-          </div>
+          <span className="section-kicker">PERM ROUTER V2 · ROBINHOOD CHAIN TESTNET</span>
+          <h1>Signed quotes. Multi-venue execution.</h1>
+          <p>Perm compares verified v4 and Synthra v3 candidates, supports token-to-token routes through ETH, applies the live fee policy, and signs every executable route before settlement.</p>
+          <div className="intro-points"><span><i>01</i> EIP-712 quote</span><span><i>02</i> Multi-hop routes</span><span><i>03</i> Step-level proof</span></div>
         </div>
 
-        <div className="token-marquee" aria-label="Robinhood testnet execution assets">
-          <div>
-            {[...LIVE_TOKENS, ...LIVE_TOKENS].map((token, index) => (
-              <span key={`${token.symbol}-${index}`}><LiveTokenMark token={token} size={21} /><b>{token.displaySymbol}</b><small>testnet only</small></span>
-            ))}
-          </div>
-        </div>
+        <div className="token-marquee" aria-label="Robinhood testnet execution assets"><div>
+          {[...LIVE_TOKENS, ...LIVE_TOKENS].map((token, index) => <span key={`${token.symbol}-${index}`}><LiveTokenMark token={token} size={21} /><b>{token.displaySymbol}</b><small>{token.venue.replace("uniswap-", "").replace("synthra-", "")}</small></span>)}
+        </div></div>
 
         <div className="trade-grid">
           <section className="swap-panel glass-panel" aria-label="Executable testnet swap">
-            <header className="panel-header">
-              <div><span className="section-kicker">EXACT INPUT</span><h2>Onchain route</h2></div>
-              <button className="network-chip" type="button" onClick={() => void switchNetwork().catch(() => undefined)} title="Robinhood Chain Testnet, chain ID 46630"><i /> RH Testnet <span>46630</span></button>
-            </header>
+            <header className="panel-header"><div><span className="section-kicker">EXACT INPUT</span><h2>Signed route</h2></div><button className="network-chip" type="button" onClick={() => void switchNetwork().catch(() => undefined)}><i /> RH Testnet <span>46630</span></button></header>
+            <div className={`preview-banner${deployment.ready ? " live-banner" : ""}`}><i /> {deployment.ready ? "Router v2 execution · testnet assets have no monetary value" : "Router v1 is read-only · deploy and publish v2 before execution"}</div>
 
-            <div className={`preview-banner${deployment.ready ? " live-banner" : ""}`}><i /> {deployment.ready ? "Live testnet execution · tokens have no monetary value" : "Contracts pass unit + fork tests · deployment signature still required"}</div>
-
-            <div className="mode-tabs" role="tablist" aria-label="Routing mode">
-              <button type="button" className="active">Best valid result</button>
-              <button type="button" title="Only verified v4 deployment is available on this testnet">V4 on-chain</button>
+            <div className="mode-tabs" role="group" aria-label="Routing mode">
+              <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Best net result</button>
+              <button type="button" className={routingMode === "v4" ? "active" : ""} onClick={() => setRoutingMode("v4")}>V4 only</button>
+              <button type="button" className={routingMode === "v3" ? "active" : ""} onClick={() => setRoutingMode("v3")}>Synthra v3</button>
+              <button type="button" className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Verified hooks</button>
             </div>
-            <div className="mode-warning">V2/V3 candidates are not shown because no verified Uniswap V2/V3 deployment was found on chain 46630. Perm will not fabricate coverage.</div>
+            <div className="mode-warning">Hook mode fails closed when no reviewed Aggregator Hook deployment is configured. Plain routes are never relabeled as hook-powered.</div>
 
             <label className="token-box">
               <span className="token-box-label">YOU PAY</span>
-              <div className="token-row">
-                <input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} aria-label={`Amount in ${sellSymbol}`} placeholder="0.0" />
-                <button className="token-chip" type="button" onClick={() => openPicker("sell")} aria-expanded={picker === "sell"}><LiveTokenMark token={sellToken} size={29} />{sellToken.displaySymbol}<span>⌄</span></button>
-              </div>
-              <div className="token-sub"><span>Balance: {account ? formatTokenAmount(balances[sellSymbol], sellToken) : "connect wallet"}</span><button type="button" onClick={() => balances[sellSymbol] !== undefined && setAmount(formatUnits(balances[sellSymbol], sellToken.decimals))}>MAX</button></div>
+              <div className="token-row"><input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))} aria-label={`Amount in ${sellSymbol}`} placeholder="0.0" /><button className="token-chip" type="button" onClick={() => openPicker("sell")}><LiveTokenMark token={sellToken} size={29} />{sellToken.displaySymbol}<span>⌄</span></button></div>
+              <div className="token-sub"><span>Balance: {account ? formatTokenAmount(balances[sellSymbol], sellToken) : "connect wallet"}</span><button type="button" onClick={setMax}>MAX</button></div>
             </label>
 
             <div className="flip-row"><button type="button" onClick={flip} aria-label="Reverse tokens"><span>↓</span><span>↑</span></button></div>
 
             <div className="token-box output-box">
               <span className="token-box-label">YOU RECEIVE · LIVE ESTIMATE</span>
-              <div className="token-row">
-                <output key={quoteKey} className="quote-value">{quote ? formatTokenAmount(quote.selected.amountOut, buyToken) : quoteLoading ? "…" : "—"}</output>
-                <button className="token-chip" type="button" onClick={() => openPicker("buy")} aria-expanded={picker === "buy"}><LiveTokenMark token={buyToken} size={29} />{buyToken.displaySymbol}<span>⌄</span></button>
-              </div>
-              <div className="token-sub"><span>{quote?.selected.providerLabel || quoteError || "Awaiting live quote"}</span><span>{quote ? `block ${quote.blockNumber}` : ""}</span></div>
+              <div className="token-row"><output key={quoteKey} className="quote-value">{quote ? formatTokenAmount(quote.selected.amountOut, buyToken) : quoteLoading ? "…" : "—"}</output><button className="token-chip" type="button" onClick={() => openPicker("buy")}><LiveTokenMark token={buyToken} size={29} />{buyToken.displaySymbol}<span>⌄</span></button></div>
+              <div className="token-sub"><span>{quote?.selected.providerLabel || quoteError || "Awaiting verified candidates"}</span><span>{quote ? `block ${quote.blockNumber}` : ""}</span></div>
             </div>
 
             <button className="quote-summary" type="button" onClick={() => setDetails((value) => !value)} aria-expanded={details}><span><i className="route-dot" />Route, fee &amp; recipient</span><b>{details ? "−" : "+"}</b></button>
+            {details && <div className="fee-breakdown">
+              <div><span>Platform fee <small>gross · {quote?.platformFeeBps ?? "—"} bps</small></span><b>{formatExactTokenAmount(quote?.grossFee, sellToken)} {sellToken.displaySymbol}</b></div>
+              <div className="rebate-line"><span>Fee rebate <small>{quote ? quote.rebateShareBps / 100 : "—"}% of Perm fee</small></span><b>−{formatExactTokenAmount(quote?.rebate, sellToken)} {sellToken.displaySymbol}</b></div>
+              <div><span>Net platform fee <small>{netFeeBps === undefined ? "—" : `${netFeeBps} bps`}</small></span><b>{formatExactTokenAmount(quote?.netFee, sellToken)} {sellToken.displaySymbol}</b></div>
+              <div><span>Minimum received <small>{slippage}% slippage</small></span><b>{formatTokenAmount(quote?.selected.minAmountOut, buyToken)} {buyToken.displaySymbol}</b></div>
+              <div><span>Estimated network fee</span><b>{quote ? `${Number(formatEther(BigInt(quote.selected.estimatedNetworkFeeWei))).toPrecision(3)} ETH` : "—"}</b></div>
+              <div><span>Gas-adjusted output</span><b>{quote?.selected.gasAdjustedOutput ? `${formatTokenAmount(quote.selected.gasAdjustedOutput, buyToken)} ${buyToken.displaySymbol}` : "shown separately"}</b></div>
+              <div><span>Price impact estimate</span><b>{quote?.selected.priceImpactBps === undefined ? "unavailable" : `${(quote.selected.priceImpactBps / 100).toFixed(2)}%`}</b></div>
+              <div><span>Fee policy</span><b><code>perm-v{quote?.policyVersion ?? "—"}</code></b></div>
+              <label className="recipient-control"><span>Recipient</span><input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={account || "0x…"} /></label>
+            </div>}
 
-            {details && (
-              <div className="fee-breakdown">
-                <div><span>Platform fee <small>gross · 20 bps</small></span><b>{formatExactTokenAmount(quote?.grossFee, sellToken)} {sellToken.displaySymbol}</b></div>
-                <div className="rebate-line"><span>Fee rebate <small>25% of Perm fee</small></span><b>−{formatExactTokenAmount(quote?.rebate, sellToken)} {sellToken.displaySymbol}</b></div>
-                <div><span>Net platform fee <small>15 bps</small></span><b>{formatExactTokenAmount(quote?.netFee, sellToken)} {sellToken.displaySymbol}</b></div>
-                <div><span>Minimum received <small>{slippage}% slippage</small></span><b>{formatTokenAmount(quote?.selected.minAmountOut, buyToken)} {buyToken.displaySymbol}</b></div>
-                <div><span>Estimated network fee</span><b>{quote ? `${Number(formatEther(BigInt(quote.selected.estimatedNetworkFeeWei))).toPrecision(3)} ETH` : "—"}</b></div>
-                <div><span>Fee policy</span><b><code>perm-v1</code></b></div>
-                <label className="recipient-control"><span>Recipient</span><input value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={account || "0x…"} aria-label="Swap output recipient" /></label>
-              </div>
-            )}
+            <div className="slippage-row"><span>Slippage tolerance</span><div>{[0.1, 0.5, 1].map((value) => <button key={value} type="button" className={slippage === value ? "active" : ""} onClick={() => setSlippage(value)}>{value}%</button>)}<label className="custom-slippage"><input type="number" min="0.01" max="20" step="0.01" value={slippage} onChange={(event) => setSlippage(Math.min(20, Math.max(0.01, Number(event.target.value) || 0.01)))} /><span>%</span></label></div></div>
+            <label className="permit-toggle"><input type="checkbox" checked={preferPermit2} onChange={(event) => setPreferPermit2(event.target.checked)} /><span>Use Permit2 signature when an allowance is available</span></label>
+            {account && balancesReady && !balanceEnough && <div className="transaction-status error"><i /><span>{!tokenBalanceEnough ? `Insufficient ${sellToken.displaySymbol} balance.` : "Insufficient ETH for the reserved network gas."}</span></div>}
+            {quote?.selected.priceImpactBps !== undefined && quote.selected.priceImpactBps >= 100 && <div className="transaction-status error"><i /><span>High estimated price impact: {(quote.selected.priceImpactBps / 100).toFixed(2)}%. Reduce size or review another route.</span></div>}
+            {quote && !quote.executable && quote.deploymentReason && <div className="transaction-status error"><i /><span>{quote.deploymentReason}</span></div>}
 
-            <div className="slippage-row"><span>Slippage tolerance</span><div>{[0.1, 0.5, 1].map((value) => <button key={value} type="button" className={slippage === value ? "active" : ""} onClick={() => setSlippage(value)}>{value}%</button>)}</div></div>
+            {account && isCorrectChain && !deployment.ready ? <Link className="connect-action setup-action" href="/setup">Prepare Router v2 deployment</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
+            {tx.message && <div className={`transaction-status ${tx.stage}`}><i /><span>{tx.message}</span>{tx.hash && <a href={`${RH_TESTNET_EXPLORER}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
+            {tx.stage === "success" && tx.message?.startsWith("Settled") && <Link className="receipt-link" href="/proofs">Open settlement receipt →</Link>}
+            <p className="swap-note">All assets are third-party testnet fixtures with no monetary value. Symbols do not represent equity, issuer affiliation, or guaranteed pricing.</p>
 
-            {account && isCorrectChain && !deployment.ready ? <Link className="connect-action setup-action" href="/setup">Deploy testnet contracts</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
-            {tx.message && <div className={`transaction-status ${tx.stage}`}><i /> <span>{tx.message}</span>{tx.hash && <a href={`${RH_TESTNET_EXPLORER}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
-            {tx.stage === "success" && <Link className="receipt-link" href="/proofs">Open settlement receipt →</Link>}
-            <p className="swap-note">All non-ETH assets in this testnet interface are unvalued third-party test tokens. Names and symbols do not represent equity, ownership, live pricing, or issuer affiliation.</p>
-
-            {picker && (
-              <div className="token-picker-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}>
-                <section className="token-picker" role="dialog" aria-modal="true" aria-labelledby="token-picker-title">
-                  <header><div><span className="section-kicker">CHAIN 46630</span><h3 id="token-picker-title">Choose a testnet asset</h3></div><button type="button" onClick={() => setPicker(null)} aria-label="Close token selector">×</button></header>
-                  <label className="token-search"><span>⌕</span><input autoFocus value={tokenSearch} onChange={(event) => setTokenSearch(event.target.value)} placeholder="Search name or symbol" /></label>
-                  <div className="token-list">
-                    {filteredTokens.map((token) => {
-                      const current = picker === "sell" ? sellSymbol === token.symbol : buySymbol === token.symbol;
-                      return <button key={token.symbol} type="button" className={current ? "active" : ""} onClick={() => chooseToken(token.symbol)}><LiveTokenMark token={token} size={34} /><span><b>{token.displaySymbol}</b><small>{token.name}</small></span><em>{token.symbol === "ETH" ? "NATIVE" : "TEST ASSET"}</em>{current && <i>✓</i>}</button>;
-                    })}
-                  </div>
-                  <p>Only pools initialized on the official testnet PoolManager and successfully quoted by the official V4Quoter are eligible.</p>
-                </section>
-              </div>
-            )}
+            {picker && <div className="token-picker-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}><section ref={pickerRef} className="token-picker" role="dialog" aria-modal="true" aria-labelledby="token-picker-title">
+              <header><div><span className="section-kicker">CHAIN 46630</span><h3 id="token-picker-title">Choose a testnet asset</h3></div><button type="button" onClick={() => setPicker(null)} aria-label="Close token picker">×</button></header>
+              <label className="token-search"><span>⌕</span><input autoFocus value={tokenSearch} onChange={(event) => setTokenSearch(event.target.value)} placeholder="Search name or symbol" /></label>
+              <div className="token-list">{filteredTokens.map((token) => {
+                const current = picker === "sell" ? sellSymbol === token.symbol : buySymbol === token.symbol;
+                return <button key={token.symbol} type="button" className={current ? "active" : ""} onClick={() => chooseToken(token.symbol)}><LiveTokenMark token={token} size={34} /><span><b>{token.displaySymbol}</b><small>{token.name}</small></span><em>{token.venue.replace("uniswap-", "").replace("synthra-", "")}</em>{current && <i>✓</i>}</button>;
+              })}</div>
+              <p>Token-to-token requests are routed through verified direct or ETH-intermediate venue steps; unavailable candidates are excluded.</p>
+            </section></div>}
           </section>
 
           <aside className="route-panel glass-panel" aria-label="Live route comparison">
-            <header className="panel-header route-panel-header"><div><span className="section-kicker">VALID CANDIDATES</span><h2>Same amount. Same policy.</h2></div><span className="fresh-chip"><i /> {quote ? "ONCHAIN" : "WAITING"}</span></header>
+            <header className="panel-header route-panel-header"><div><span className="section-kicker">VALID CANDIDATES</span><h2>Same amount. Same policy.</h2></div><span className="fresh-chip"><i /> {quote ? "SIGNED" : "WAITING"}</span></header>
             <div className="pair-context"><span><LiveTokenMark token={sellToken} size={25} /><LiveTokenMark token={buyToken} size={25} /></span><div><b>{sellToken.displaySymbol} → {buyToken.displaySymbol}</b><small>exact input · chain 46630</small></div><em>{quote?.candidates.length || 0} valid</em></div>
-
             <div className="route-list">
-              {quote?.candidates.map((route, index) => (
-                <article className="candidate selected" key={route.poolId} style={{ "--row-delay": `${index * 80}ms` } as CSSProperties}>
-                  <div className="candidate-rank">✓</div>
-                  <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">ONCHAIN QUOTE</span></div><p>{route.hook === ZERO_ADDRESS ? "Direct pool · no hook claim" : "Verified hook candidate"}</p><div className="route-path"><LiveTokenMark token={sellToken} size={17} /><i /><em>V4 · {route.pool.fee / 10_000}%</em><i /><LiveTokenMark token={buyToken} size={17} /></div></div>
-                  <div className="candidate-output"><b>{formatTokenAmount(route.amountOut, buyToken)}</b><span>{buyToken.displaySymbol}</span><small>{Number(formatEther(BigInt(route.estimatedNetworkFeeWei))).toPrecision(3)} ETH gas est.</small></div>
-                </article>
-              ))}
-              {!quote && <div className="route-empty">{quoteLoading ? "Reading the official V4Quoter…" : quoteError || "Enter an amount to request a comparable onchain quote."}</div>}
+              {quote?.candidates.map((route, index) => <article className={`candidate${index === 0 ? " selected" : ""}`} key={route.routeId} style={{ "--row-delay": `${index * 60}ms` } as CSSProperties}>
+                <div className="candidate-rank">{index === 0 ? "✓" : index + 1}</div>
+                <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">{route.routeKind.toUpperCase()}</span></div><p>{route.hook === ZERO_ADDRESS ? `${route.steps.length} verified step${route.steps.length > 1 ? "s" : ""} · no hook claim` : route.verifiedHook ? "Onchain codehash-verified hook" : "Hook unavailable"}</p><div className="route-path">{route.steps.map((step, stepIndex) => <span key={`${route.routeId}-${stepIndex}`}><em>{step.providerId === "SYNTHRA_V3" ? "V3" : "V4"} · {step.poolFee / 10_000}%</em>{stepIndex < route.steps.length - 1 && <i />}</span>)}</div></div>
+                <div className="candidate-output"><b>{formatTokenAmount(route.amountOut, buyToken)}</b><span>{buyToken.displaySymbol}</span><small>{Number(formatEther(BigInt(route.estimatedNetworkFeeWei))).toPrecision(3)} ETH gas</small></div>
+              </article>)}
+              {!quote && <div className="route-empty">{quoteLoading ? "Reading verified onchain quoters…" : quoteError || "Enter an amount to compare routes."}</div>}
             </div>
-
-            <div className="comparison-note"><span>WHY THIS ROUTE</span><p>{quote ? "This candidate returned the highest valid token output. Gas is displayed separately because no trusted output-token conversion is used." : "Unavailable or reverting candidates are excluded rather than relabeled."}</p></div>
-            <div className="receipt-preview"><div className="receipt-preview-head"><span>SETTLEMENT GATE</span><i>{deployment.ready ? "READY" : "DEPLOY"}</i></div><div><span>Target</span><b>immutable V4 adapter</b></div><div><span>Approval</span><b>exact amount only</b></div><div><span>Min output</span><b>recipient-bound</b></div><div><span>Receipt</span><b>event + tx log</b></div></div>
+            <div className="comparison-note"><span>WHY THIS ROUTE</span><p>{quote ? quote.selected.gasNormalized ? "Candidates with a valid ETH-to-output conversion are ranked by estimated output after network gas." : "Output is ranked directly; gas remains separate where no trustworthy conversion exists." : "Invalid, stale, unverified-hook, or reverting candidates fail closed."}</p></div>
+            <div className="receipt-preview"><div className="receipt-preview-head"><span>SETTLEMENT GATE</span><i>{deployment.ready ? "V2 READY" : "DEPLOY V2"}</i></div><div><span>Quote</span><b>EIP-712 server signature</b></div><div><span>Approval</span><b>exact or Permit2</b></div><div><span>Min output</span><b>recipient-bound</b></div><div><span>Receipt</span><b>route-step events</b></div></div>
           </aside>
         </div>
       </section>
 
-      <section className="trade-explainer app-reveal"><div><span className="section-kicker">EXECUTION MODEL</span><h2>Nothing becomes “live” because a label says so.</h2></div><div className="explainer-grid"><article><b>01</b><h3>Input-basis accounting</h3><p>The V4 quote uses routed input after the net Perm fee—the same arithmetic enforced by settlement.</p></article><article><b>02</b><h3>Restricted adapter</h3><p>The contract calls one immutable PoolManager, rejects arbitrary hook data, and clears its exact token approval.</p></article><article><b>03</b><h3>Proof after execution</h3><p>A successful receipt comes from the SwapSettled event and transaction log. Reverts create no receipt or rebate.</p></article></div><Link href="/docs" className="button secondary">Read security boundaries</Link></section>
+      <section className="trade-explainer app-reveal"><div><span className="section-kicker">EXECUTION MODEL</span><h2>Every executable field is signed and checked.</h2></div><div className="explainer-grid"><article><b>01</b><h3>Signed accounting</h3><p>The fee policy, account, recipient, minimum, route hash, chain and expiry are part of one EIP-712 quote.</p></article><article><b>02</b><h3>Restricted adapters</h3><p>Every step uses an allowlisted adapter with immutable venue targets; v4 hooks are pinned to runtime codehash.</p></article><article><b>03</b><h3>Proof after execution</h3><p>The router emits route and per-step identities only after actual recipient output passes the minimum.</p></article></div><Link href="/docs" className="button secondary">Read security boundaries</Link></section>
       <div className="footer-shell app-footer"><Footer /></div>
     </main>
   );
 }
-
