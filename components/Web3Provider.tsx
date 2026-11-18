@@ -1,21 +1,22 @@
 "use client";
 
-import {
-  createWalletClient,
-  custom,
-  numberToHex,
-  type Address,
-  type EIP1193Provider,
-  type WalletClient,
-} from "viem";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createWalletClient, custom, numberToHex, type Address, type EIP1193Provider, type WalletClient } from "viem";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type UniversalProvider from "@walletconnect/universal-provider";
 import { RH_TESTNET_CHAIN_ID, RH_TESTNET_EXPLORER, robinhoodTestnet } from "@/lib/web3/config";
 
 declare global {
   interface Window {
-    ethereum?: EIP1193Provider & { on?: (event: string, listener: (...args: unknown[]) => void) => void; removeListener?: (event: string, listener: (...args: unknown[]) => void) => void };
+    ethereum?: EIP1193Provider & ProviderEvents;
   }
 }
+
+type ProviderEvents = {
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+  disconnect?: () => Promise<void>;
+};
+type WalletMode = "injected" | "walletconnect";
 
 type Web3ContextValue = {
   account?: Address;
@@ -23,16 +24,19 @@ type Web3ContextValue = {
   connecting: boolean;
   error?: string;
   isCorrectChain: boolean;
-  connect: () => Promise<void>;
+  walletMode?: WalletMode;
+  walletConnectAvailable: boolean;
+  connect: (mode?: WalletMode) => Promise<void>;
   disconnect: () => void;
   switchNetwork: () => Promise<void>;
   walletClient: () => WalletClient;
 };
 
 const Web3Context = createContext<Web3ContextValue | null>(null);
+const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
 
-function injectedProvider() {
-  if (typeof window === "undefined" || !window.ethereum) throw new Error("No EVM browser wallet detected. Install Robinhood Wallet, MetaMask, or Rabby.");
+function getInjectedProvider() {
+  if (typeof window === "undefined" || !window.ethereum) throw new Error("No injected EVM wallet detected. Choose WalletConnect or install Robinhood Wallet, MetaMask, or Rabby.");
   return window.ethereum;
 }
 
@@ -41,39 +45,85 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
   const [chainId, setChainId] = useState<number>();
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string>();
+  const [provider, setProvider] = useState<(EIP1193Provider & ProviderEvents)>();
+  const [walletMode, setWalletMode] = useState<WalletMode>();
+  const [walletConnectUri, setWalletConnectUri] = useState<string>();
+  const [walletConnectQr, setWalletConnectQr] = useState<string>();
+  const walletConnectAttempt = useRef<UniversalProvider | undefined>(undefined);
+  const walletDialogRef = useRef<HTMLDivElement>(null);
 
-  const refresh = useCallback(async () => {
-    if (!window.ethereum) return;
+  const refresh = useCallback(async (source?: EIP1193Provider) => {
+    const active = source || provider;
+    if (!active) return;
     const [accounts, chain] = await Promise.all([
-      window.ethereum.request({ method: "eth_accounts" }) as Promise<Address[]>,
-      window.ethereum.request({ method: "eth_chainId" }) as Promise<string>,
+      active.request({ method: "eth_accounts" }) as Promise<Address[]>,
+      active.request({ method: "eth_chainId" }) as Promise<string>,
     ]);
     setAccount(accounts[0]);
     setChainId(Number.parseInt(chain, 16));
+  }, [provider]);
+
+  useEffect(() => {
+    if (!window.ethereum || provider) return;
+    setProvider(window.ethereum);
+    setWalletMode("injected");
+    void refresh(window.ethereum).catch(() => undefined);
+  }, [provider, refresh]);
+
+  const closeWalletConnect = useCallback(() => {
+    try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* already settled */ }
+    walletConnectAttempt.current = undefined;
+    setWalletConnectUri(undefined);
+    setWalletConnectQr(undefined);
   }, []);
 
   useEffect(() => {
-    refresh().catch(() => undefined);
-    const provider = window.ethereum;
+    if (!walletConnectUri) return;
+    walletDialogRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeWalletConnect();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(walletDialogRef.current?.querySelectorAll<HTMLElement>("a[href],button:not([disabled])") || [])];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === walletDialogRef.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  }, [walletConnectUri, closeWalletConnect]);
+
+  useEffect(() => {
     if (!provider?.on) return;
     const accountsChanged = (value: unknown) => setAccount((value as Address[])[0]);
     const chainChanged = (value: unknown) => setChainId(Number.parseInt(String(value), 16));
+    const disconnected = () => { setAccount(undefined); setChainId(undefined); };
     provider.on("accountsChanged", accountsChanged);
     provider.on("chainChanged", chainChanged);
+    provider.on("disconnect", disconnected);
     return () => {
       provider.removeListener?.("accountsChanged", accountsChanged);
       provider.removeListener?.("chainChanged", chainChanged);
+      provider.removeListener?.("disconnect", disconnected);
     };
-  }, [refresh]);
+  }, [provider]);
 
-  const switchNetwork = useCallback(async () => {
-    const provider = injectedProvider();
+  const switchWith = useCallback(async (active: EIP1193Provider) => {
     try {
-      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: numberToHex(RH_TESTNET_CHAIN_ID) }] });
+      await active.request({ method: "wallet_switchEthereumChain", params: [{ chainId: numberToHex(RH_TESTNET_CHAIN_ID) }] });
     } catch (cause) {
       const code = (cause as { code?: number }).code;
       if (code !== 4902) throw cause;
-      await provider.request({
+      await active.request({
         method: "wallet_addEthereumChain",
         params: [{
           chainId: numberToHex(RH_TESTNET_CHAIN_ID),
@@ -84,38 +134,106 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
         }],
       });
     }
-    await refresh();
+    await refresh(active);
   }, [refresh]);
 
-  const connect = useCallback(async () => {
+  const switchNetwork = useCallback(async () => {
+    const active = provider || getInjectedProvider();
+    await switchWith(active);
+  }, [provider, switchWith]);
+
+  const connect = useCallback(async (mode: WalletMode = "injected") => {
     setConnecting(true);
     setError(undefined);
     try {
-      const provider = injectedProvider();
-      const accounts = await provider.request({ method: "eth_requestAccounts" }) as Address[];
-      setAccount(accounts[0]);
-      const chain = await provider.request({ method: "eth_chainId" }) as string;
-      const nextChain = Number.parseInt(chain, 16);
-      setChainId(nextChain);
-      if (nextChain !== RH_TESTNET_CHAIN_ID) await switchNetwork();
+      let active: EIP1193Provider & ProviderEvents;
+      if (mode === "walletconnect") {
+        if (!walletConnectProjectId) throw new Error("WalletConnect is not configured. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID.");
+        const [{ default: UniversalProvider }, { default: qrcode }] = await Promise.all([
+          import("@walletconnect/universal-provider"),
+          import("qrcode-generator"),
+        ]);
+        const wc = await UniversalProvider.init({
+          projectId: walletConnectProjectId,
+          metadata: {
+            name: "Perm",
+            description: "Signed multi-venue testnet routing",
+            url: window.location.origin,
+            icons: [`${window.location.origin}/icon.png`],
+          },
+        });
+        walletConnectAttempt.current = wc;
+        wc.on("display_uri", (uri: unknown) => {
+          if (typeof uri !== "string" || uri.length > 4_096 || !uri.startsWith("wc:")) {
+            try { wc.abortPairingAttempt(); } catch { /* invalid pairing is already closed */ }
+            setError("WalletConnect returned an invalid pairing URI");
+            return;
+          }
+          const qr = qrcode(0, "M");
+          qr.addData(uri);
+          qr.make();
+          setWalletConnectUri(uri);
+          setWalletConnectQr(qr.createDataURL(5, 12));
+        });
+        await wc.connect({
+          namespaces: {
+            eip155: {
+              chains: [`eip155:${RH_TESTNET_CHAIN_ID}`],
+              methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData_v4"],
+              events: ["accountsChanged", "chainChanged"],
+              rpcMap: { [RH_TESTNET_CHAIN_ID]: robinhoodTestnet.rpcUrls.default.http[0] },
+            },
+          },
+          optionalNamespaces: {
+            eip155: {
+              chains: [`eip155:${RH_TESTNET_CHAIN_ID}`],
+              methods: ["eth_sign", "eth_signTypedData", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
+              events: ["accountsChanged", "chainChanged"],
+              rpcMap: { [RH_TESTNET_CHAIN_ID]: robinhoodTestnet.rpcUrls.default.http[0] },
+            },
+          },
+        });
+        walletConnectAttempt.current = undefined;
+        setWalletConnectUri(undefined);
+        setWalletConnectQr(undefined);
+        active = wc as unknown as EIP1193Provider & ProviderEvents;
+      } else {
+        active = getInjectedProvider();
+        await active.request({ method: "eth_requestAccounts" });
+      }
+      setProvider(active);
+      setWalletMode(mode);
+      const chain = await active.request({ method: "eth_chainId" }) as string;
+      if (Number.parseInt(chain, 16) !== RH_TESTNET_CHAIN_ID) await switchWith(active);
+      else await refresh(active);
     } catch (cause) {
+      if (mode === "walletconnect") {
+        try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* pairing already settled */ }
+        walletConnectAttempt.current = undefined;
+        setWalletConnectUri(undefined);
+        setWalletConnectQr(undefined);
+      }
       setError(cause instanceof Error ? cause.message : "Wallet connection failed");
       throw cause;
     } finally {
       setConnecting(false);
     }
-  }, [switchNetwork]);
+  }, [refresh, switchWith]);
 
   const disconnect = useCallback(() => {
+    closeWalletConnect();
+    if (walletMode === "walletconnect") void provider?.disconnect?.().catch(() => undefined);
     setAccount(undefined);
+    setChainId(undefined);
     setError(undefined);
-  }, []);
+    setWalletMode(undefined);
+    setProvider(window.ethereum);
+  }, [provider, walletMode, closeWalletConnect]);
 
-  const getWalletClient = useCallback(() => createWalletClient({
-    account,
-    chain: robinhoodTestnet,
-    transport: custom(injectedProvider()),
-  }), [account]);
+  const getWalletClient = useCallback(() => {
+    const active = provider || getInjectedProvider();
+    return createWalletClient({ account, chain: robinhoodTestnet, transport: custom(active) });
+  }, [account, provider]);
 
   const value = useMemo<Web3ContextValue>(() => ({
     account,
@@ -123,13 +241,33 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
     connecting,
     error,
     isCorrectChain: chainId === RH_TESTNET_CHAIN_ID,
+    walletMode,
+    walletConnectAvailable: Boolean(walletConnectProjectId),
     connect,
     disconnect,
     switchNetwork,
     walletClient: getWalletClient,
-  }), [account, chainId, connecting, error, connect, disconnect, switchNetwork, getWalletClient]);
+  }), [account, chainId, connecting, error, walletMode, connect, disconnect, switchNetwork, getWalletClient]);
 
-  return <Web3Context.Provider value={value}>{children}</Web3Context.Provider>;
+  return <Web3Context.Provider value={value}>
+    {children}
+    {walletConnectUri && <div className="walletconnect-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) closeWalletConnect();
+    }}>
+      <div ref={walletDialogRef} className="walletconnect-dialog" role="dialog" aria-modal="true" aria-labelledby="walletconnect-title" aria-describedby="walletconnect-help" tabIndex={-1}>
+        <button className="walletconnect-close" type="button" onClick={closeWalletConnect} aria-label="Close WalletConnect dialog">×</button>
+        <span className="walletconnect-kicker">SECURE PAIRING</span>
+        <h2 id="walletconnect-title">Scan with your wallet</h2>
+        <p id="walletconnect-help">Open a WalletConnect-compatible wallet, scan this code, and approve only the Robinhood Chain testnet session.</p>
+        {walletConnectQr && <img src={walletConnectQr} alt="WalletConnect pairing QR code" width={260} height={260} />}
+        <div className="walletconnect-actions">
+          <a href={walletConnectUri}>Open wallet app</a>
+          <button type="button" onClick={() => void navigator.clipboard.writeText(walletConnectUri).catch(() => setError("Could not copy the WalletConnect URI"))}>Copy pairing link</button>
+        </div>
+        <small>Pairing links expire. Perm never asks for a seed phrase or private key.</small>
+      </div>
+    </div>}
+  </Web3Context.Provider>;
 }
 
 export function useWeb3() {

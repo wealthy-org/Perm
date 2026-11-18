@@ -25,13 +25,16 @@ const MENU = [
 
 export default function Header({ extra }: { extra?: ReactNode }) {
   const path = usePathname();
-  const { account, connecting, error, isCorrectChain, connect, disconnect, switchNetwork } = useWeb3();
+  const { account, connecting, error, isCorrectChain, connect, disconnect, switchNetwork, walletConnectAvailable } = useWeb3();
   const [open, setOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
   const [solid, setSolid] = useState(false);
   const menuRef = useRef<HTMLElement>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const walletRef = useRef<HTMLDivElement>(null);
+  const walletButton = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => setOpen(false), [path]);
+  useEffect(() => { setOpen(false); setWalletOpen(false); }, [path]);
 
   useEffect(() => {
     const read = () => setSolid(window.scrollY > 10);
@@ -59,6 +62,25 @@ export default function Header({ extra }: { extra?: ReactNode }) {
       removeEventListener("scroll", onScroll);
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!walletOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!walletRef.current?.contains(event.target as Node)) setWalletOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setWalletOpen(false);
+        walletButton.current?.focus();
+      }
+    };
+    addEventListener("pointerdown", onPointer);
+    addEventListener("keydown", onKey);
+    return () => {
+      removeEventListener("pointerdown", onPointer);
+      removeEventListener("keydown", onKey);
+    };
+  }, [walletOpen]);
 
   const active = (href: string) => {
     if (href === "/") return path === "/";
@@ -103,14 +125,25 @@ export default function Header({ extra }: { extra?: ReactNode }) {
           >
             <i aria-hidden="true" /><span>{account && !isCorrectChain ? "Wrong network" : "RH Testnet"}</span><small>⌄</small>
           </button>
-          <button
-            className="header-cta"
-            type="button"
-            onClick={() => account ? disconnect() : void connect().catch(() => undefined)}
-            title={error || (account ? "Disconnect this interface session" : "Connect an EVM wallet")}
-          >
-            {connecting ? "Connecting…" : shortAddress(account)}
-          </button>
+          <div className="wallet-connect-wrap" ref={walletRef}>
+            <button
+              ref={walletButton}
+              className="header-cta"
+              type="button"
+              onClick={() => account ? disconnect() : setWalletOpen((value) => !value)}
+              title={error || (account ? "Disconnect this interface session" : "Connect an EVM wallet")}
+              aria-expanded={walletOpen}
+              aria-haspopup="dialog"
+              aria-controls="wallet-choice"
+            >
+              {connecting ? "Connecting…" : shortAddress(account)}
+            </button>
+            {walletOpen && !account && <div id="wallet-choice" className="wallet-choice" role="dialog" aria-label="Choose wallet connection">
+              <button type="button" autoFocus onClick={() => { setWalletOpen(false); void connect("injected").catch(() => undefined); }}><b>Browser wallet</b><small>Robinhood Wallet, MetaMask, Rabby</small></button>
+              <button type="button" disabled={!walletConnectAvailable} onClick={() => { setWalletOpen(false); void connect("walletconnect").catch(() => undefined); }}><b>WalletConnect</b><small>{walletConnectAvailable ? "Mobile QR connection" : "Project ID not configured"}</small></button>
+            </div>}
+            {error && !account && !walletOpen && <span className="wallet-error" role="alert">{error}</span>}
+          </div>
           <button
             ref={menuButton}
             className="icon-button menu-trigger"

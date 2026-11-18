@@ -13,6 +13,11 @@ const TOKEN_MARKS: Record<LiveTokenSymbol, TokenMark> = {
   SPCX: { logo: "/tokens/spcx.svg", background: "#f1f4f6", scale: 0.76 },
   OPENAI: { logo: "/tokens/openai.svg", background: "#f2f3f1", scale: 0.66 },
   ANTHROPIC: { logo: "/tokens/anthropic.svg", background: "#f3ece6", scale: 0.64 },
+  TSLA: { logo: "/tokens/tsla.svg", background: "#fff1f1", scale: 0.66 },
+  AMZN: { logo: "/tokens/amzn.svg", background: "#fff7e8", scale: 0.68 },
+  PLTR: { logo: "/tokens/pltr.svg", background: "#f2f2f2", scale: 0.66 },
+  NFLX: { logo: "/tokens/nflx.svg", background: "#fff0f1", scale: 0.64 },
+  AMD: { logo: "/tokens/amd.svg", background: "#fff1f1", scale: 0.68 },
 };
 
 export default function LiveTokenMark({ token, size }: { token: LiveToken; size: number }) {
