@@ -25,8 +25,8 @@ const FALLBACK_STOPS: SceneStop[] = [
 
 const JOURNEY_CARDS: JourneyCard[] = [
   {
-    from: 0.13,
-    to: 0.225,
+    from: 0.18,
+    to: 0.275,
     content: (
       <>
         <CardKicker left="THE PERM FLOW" right="ROUTER · SETTLEMENT" />
@@ -36,7 +36,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
     ),
   },
   {
-    from: 0.24,
+    from: 0.285,
     to: 0.355,
     content: (
       <>
@@ -129,6 +129,7 @@ function CardKicker({ left, right }: { left: string; right: string }) {
 export default function Landing() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const hero = useRef<HTMLElement>(null);
+  const transitionVeil = useRef<HTMLDivElement>(null);
   const scrollHint = useRef<HTMLDivElement>(null);
   const cardElements = useRef<Array<HTMLElement | null>>([]);
   const controller = useRef<SceneController | null>(null);
@@ -156,13 +157,21 @@ export default function Landing() {
     }, 1320);
 
     const applyPresentation = (next: number, isPast: boolean) => {
-      const heroVisibility = Math.max(0, 1 - next / 0.075);
+      const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+      const ease = (value: number) => value * value * (3 - 2 * value);
+      const heroExit = ease(clampUnit((next - 0.012) / 0.078));
+      const heroVisibility = 1 - heroExit;
       if (hero.current) {
         hero.current.style.opacity = String(heroVisibility);
-        hero.current.style.transform = `translateY(${(1 - heroVisibility) * -22}px) scale(${0.965 + heroVisibility * 0.035})`;
-        hero.current.style.filter = `blur(${(1 - heroVisibility) * 5}px)`;
+        hero.current.style.transform = `translateY(${-10 * heroExit}px) scale(${1 - heroExit * 0.008})`;
+        hero.current.style.filter = `blur(${heroExit * 1.8}px)`;
       }
-      if (scrollHint.current) scrollHint.current.style.opacity = String(Math.max(0, 1 - next / 0.035));
+      if (transitionVeil.current) {
+        const veilIn = ease(clampUnit((next - 0.012) / 0.068));
+        const veilOut = ease(clampUnit((next - 0.105) / 0.09));
+        transitionVeil.current.style.opacity = String((0.08 + veilIn * 0.66) * (1 - veilOut));
+      }
+      if (scrollHint.current) scrollHint.current.style.opacity = String(Math.max(0, 1 - next / 0.03));
       cardElements.current.forEach((element, index) => {
         const card = JOURNEY_CARDS[index];
         element?.classList.toggle("visible", !isPast && next >= card.from && next <= card.to);
@@ -257,6 +266,7 @@ export default function Landing() {
       <canvas id="perm-scene" ref={canvas} className={failed ? "failed" : undefined} aria-hidden="true" />
       <div className={`scene-fallback${failed ? " visible" : ""}`} aria-hidden="true"><i /><i /><i /></div>
       <div className="scene-atmosphere" aria-hidden="true"><i /><i /><i /></div>
+      <div ref={transitionVeil} className="scene-transition-veil" aria-hidden="true" />
 
       <div className={`site-loader${ready ? " hidden" : ""}`} aria-hidden={ready}>
         <div className="loader-emblem"><i /><i /><span /><img src="/perm-mark.png" alt="" /></div>

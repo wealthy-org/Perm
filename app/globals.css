@@ -408,7 +408,7 @@ button{color:inherit}
 .token-pair .token-logo+ .token-logo{margin-left:-9px;box-shadow:0 0 0 2px #fff,0 5px 14px rgba(43,70,78,.09)}
 
 /* cinematic entry */
-.landing .landing-hero{transition:none}
+.landing .landing-hero{transition:none;will-change:opacity,transform,filter}
 .landing .landing-hero h1{font-size:clamp(4.7rem,10vw,9rem)}
 .landing .hero-orbit{opacity:.62}
 .landing #perm-scene{opacity:.22;filter:blur(5px) saturate(.86);transform:scale(1.025);transition:opacity 1.25s cubic-bezier(.2,.8,.2,1),filter 1.25s cubic-bezier(.2,.8,.2,1),transform 1.8s cubic-bezier(.2,.8,.2,1)}
@@ -452,8 +452,9 @@ button{color:inherit}
 .scene-atmosphere>i{position:absolute;top:-25%;width:1px;height:150%;background:linear-gradient(transparent,rgba(255,255,255,.55),transparent);filter:blur(.5px);transform:rotate(18deg);animation:atmosphereSweep 13s linear infinite}
 .scene-atmosphere>i:nth-child(1){left:24%}.scene-atmosphere>i:nth-child(2){left:56%;animation-delay:-7s;opacity:.6}.scene-atmosphere>i:nth-child(3){left:84%;animation-delay:-3s;opacity:.38}
 @keyframes atmosphereSweep{from{transform:translateX(-12vw) rotate(18deg)}to{transform:translateX(12vw) rotate(18deg)}}
+.scene-transition-veil{position:fixed;z-index:3;inset:0;pointer-events:none;opacity:.08;background:radial-gradient(circle at 68% 25%,rgba(255,244,210,.24),transparent 24%),linear-gradient(180deg,rgba(232,241,246,.42),rgba(244,248,246,.94) 58%,rgba(232,242,242,.82));backdrop-filter:blur(2.5px) saturate(.8);-webkit-backdrop-filter:blur(2.5px) saturate(.8);will-change:opacity}
 
-.landing .journey-card{width:min(390px,calc(100vw - 28px));padding:16px 17px 15px;opacity:0;visibility:hidden;transform:translateY(18px) scale(.99);transition:transform .48s cubic-bezier(.2,.8,.2,1)}
+.landing .journey-card{width:min(390px,calc(100vw - 28px));padding:16px 17px 15px;opacity:0;visibility:hidden;transform:translateY(18px) scale(.99);transition:opacity .48s ease,transform .48s cubic-bezier(.2,.8,.2,1)}
 .landing .journey-card.visible{opacity:1;visibility:visible;transform:none}
 .landing .journey-card.visible>*{animation:cardDetailEnter .48s both}
 .landing .journey-card.visible>*:nth-child(2){animation-delay:.06s}.landing .journey-card.visible>*:nth-child(3){animation-delay:.11s}.landing .journey-card.visible>*:nth-child(4){animation-delay:.16s}.landing .journey-card.visible>*:nth-child(5){animation-delay:.2s}
