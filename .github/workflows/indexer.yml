@@ -1,0 +1,36 @@
+name: Settlement indexer
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-testnet-indexer
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Index finalized official-router logs
+        env:
+          DATABASE_URL: ${{ secrets.PERM_INDEXER_DATABASE_URL }}
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+          INDEXER_CONFIRMATIONS: "12"
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "PERM_INDEXER_DATABASE_URL is not configured; skipping durable sync."
+            exit 0
+          fi
+          corepack pnpm indexer:run

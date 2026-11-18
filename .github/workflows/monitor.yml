@@ -1,0 +1,27 @@
+name: Testnet monitor
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+      - run: corepack enable
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Check official contracts, policy, governance, RPC and indexer
+        env:
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+          DATABASE_URL: ${{ secrets.PERM_INDEXER_DATABASE_URL }}
+          PERM_ALERT_WEBHOOK_URL: ${{ secrets.PERM_ALERT_WEBHOOK_URL }}
+        run: corepack pnpm monitor:testnet
