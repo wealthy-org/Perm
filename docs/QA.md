@@ -1,97 +1,159 @@
 # Verification record
 
-Date: 17 November 2026
+Date: 17 November 2026 (Asia/Jakarta; sandbox command logs use an independent UTC clock and may show 18 November)
 
-## Automated checks
+## Release status and scope
 
-- TypeScript: passed (`corepack pnpm typecheck`)
-- Production build: passed (`corepack pnpm build`)
-- Router and adapter unit/security suite: 18 passed
-- Pinned Robinhood testnet fork integration: 1 passed at block `154719917`
-- Public pages: `/`, `/trade`, `/routes`, `/rebate`, `/proofs`, `/docs`, and `/setup` returned HTTP 200
-- Live quote endpoint: returned V4Quoter-backed quotes with chain, block, pool key, policy, slippage, gas, and `executable: true`
-- Quote binding: API `quoteId` matched independent ABI encoding of account, adapter, pair, amount, minimum, recipient, timing, policy, chain, referrer, and route hash
+This record validates the checked-in **Router v2 code and release path**. It does not claim that Router v2 is live.
 
-## Shared Robinhood testnet deployment
+The official manifest, `deployments/robinhood-testnet.json`, still identifies Router v1 and does not set `executionReady: true`. The production UI and quote API therefore remain fail-closed: live quotes can be inspected, but signed v2 execution is unavailable until a candidate is deployed, verified, transferred to governance, and explicitly promoted.
 
-- PermRouter: `0x3e350b79D4983a0e86Ad4eE25dB1DBBbfB55114d`
-- PermV4Adapter: `0xC4Df49493a828F681160056cb6D46143B56593D0`
-- Owner and treasury: `0x141DB8c1C42B0fa5b13eE17136e4E037597886a8`
-- Deployment block: `154833178`
-- Router deployment: `0x1654e9dc382f6e1e743302d0e2ca19dcddc129ddfb65a2a39a9d051794e94daf`
-- Adapter deployment: `0xd8a418addfb4f9aef8d8271a02d75deb8590d49f810fa81f92a033f649867c80`
-- Adapter enablement: `0x0ded432bd75ce8637b99b6349c7c641db65e3e3c0f1e05a458fe4782305cceeb`
+## Automated gates
 
-All three deployment transactions succeeded. Router runtime bytecode exactly matched the compiled runtime hash. Adapter runtime bytecode exactly matched the compiled template after substituting its immutable PoolManager and Router values. Onchain reads confirmed:
+| Gate | Result |
+|---|---|
+| Frozen dependency install | Passed: `corepack pnpm install --frozen-lockfile` |
+| Production dependency audit | Passed at high severity; only the documented ignored picomatch advisory remains |
+| Full dependency audit | Passed at high severity; one low-severity `elliptic` development-tool advisory remains, with no patched release |
+| Moderate coverage-tool advisory | Resolved by overriding `bn.js <4.12.3` to `4.12.3` |
+| ESLint | Passed with zero warnings |
+| TypeScript | Passed |
+| Production Next.js build | Passed; 10 static/dynamic routes generated |
+| Router/adapters/timelock suite | **30 passing, 2 fork suites pending** in the regular run |
+| Latest-state fork integrations | **2 passing**: real Robinhood v4 in both directions and real Synthra v3/Permit2 in both directions |
+| Solidity coverage | **87.30% statements, 55.65% branches, 90.91% functions, 86.50% lines** |
+| Coverage cleanup | Passed; the wrapper cleaned instrumented output, rebuilt production artifacts, and re-exported browser ABIs |
+| Browser artifact integrity | Passed after coverage cleanup |
+| Fuzz/invariants | Passed 1,024 deterministic uint127 fee inputs plus randomized conservation/reserve scenarios |
+| Slither 0.11.3 | **70 contracts, 100 detectors, 0 findings** |
+| Server-runtime integration | Passed bounded settings, streamed body cap, proxy identity, token bucket, and in-flight cache coalescing |
+| PGlite schema integration | Passed idempotency, 78-digit numerics, deferred evidence FK, state upsert, and cascade |
+| PostgreSQL 17 schema integration | Passed the same behaviors through the whole-file migration path used in production |
+| Release-gate regression | Passed: short-delay timelock promotion, unbounded monitor settings, and zero-sized discovery chunks fail closed without changing the official manifest |
+| Operations script syntax | Passed for deployment, ownership, discovery, indexer, monitoring, verification, and promotion scripts |
 
-- policy v1: `20`, `2500`, `true`, `true`;
-- direct adapter enabled with the expected `UNISWAP_V4_DIRECT` provider ID;
-- immutable PoolManager and Router values;
-- owner and treasury;
-- router unpaused; and
-- initial settlement nonce zero before E2E execution.
+CI now supplies a PostgreSQL 17 service in addition to PGlite, runs the full-tree high-severity dependency gate, uploads Solidity coverage, and runs Slither independently.
 
-The verified manifest is committed at `deployments/robinhood-testnet.json`. Quote and receipt APIs were retested without browser-local deployment parameters. The Setup page was also retested after deleting local deployment state and correctly reported `ACTIVE FROM PROJECT MANIFEST` without offering redeployment.
+## Contract behaviors exercised
 
-## Real wallet E2E evidence
+The regression suite confirms:
 
-### Native input: ETH → NVDA:T
+- EIP-712 quote authorization binds account, pair, exact input, minimum output, recipient, timing, policy, chain, referrer, and route hash;
+- forged, mutated, replayed, stale, future, expired, and wrong-chain quotes fail;
+- self-referral fails even if included in a signed quote;
+- up to four continuous steps can settle with per-step provider, adapter, pool/route, amount, hook, and hook-codehash evidence;
+- hook routes fail closed unless the exact runtime codehash is reviewed;
+- Permit2 signature transfer and exact-approval paths work;
+- fee-on-transfer input fails before routing and rolls state back;
+- treasury/referral liabilities use pull accounting and remain protected reserves;
+- native output succeeds for a valid recipient and atomically rolls back for a rejecting recipient;
+- minimum-output and adapter-reentrancy failures roll back quote consumption, fees, balances, and allowances;
+- Router and both adapters can rescue only owner-authorized stranded balances outside active execution;
+- forced native and ERC-20 balances were recovered from both adapters, while an unauthorized caller and a rejecting native recipient failed;
+- zero fee, full rebate, dust rounding, referral conservation, and reserve accounting hold;
+- emergency pause, signer rotation, and two-step ownership work; and
+- a real OpenZeppelin timelock batch can schedule and atomically accept Router, v4-adapter, and v3-adapter ownership only after the delay.
 
-- Settlement: `0xf76cdc7e4c1d20b43b5d7bfb62314599b78355b55f5965b41d6553126e5ab60b`
-- Block: `154836799`
-- Input: `0.0001 ETH`
-- Routed input: `0.00009985 ETH`
-- Actual output: `0.000013528386301086 NVDA:T`
-- Gross fee: `0.0000002 ETH`
-- Rebate: `0.00000005 ETH`
-- Net fee: `0.00000015 ETH`
-- Actual network fee: `0.00000206 ETH`
-- Hook claim: none
+The standard and timelock-enabled deployment rehearsals both passed. The timelock ownership plan remained deterministic with operation ID:
 
-### ERC-20 input: NVDA:T → ETH
+`0x6a4335d182623f28a1daf6f16fdf1afeeaa1ca1c8c1509dbe278f4c7f8afaef6`
 
-- Exact approval: `0xb7397a5bcaef65fccb911809469e70468f7469fe8ea74b610aaf36eca5123dbe`
-- Settlement: `0x17b294d4b5c212f83c8ea4536e9d2fd4f5b650a34297d46db2e5c27e59ab9904`
-- Block: `154842634`
-- Approved/input amount: `0.00001 NVDA:T`
-- Routed input: `0.000009985 NVDA:T`
-- Actual output: `0.000074313192980675 ETH`
-- Gross fee: `0.00000002 NVDA:T`
-- Rebate: `0.000000005 NVDA:T`
-- Net fee: `0.000000015 NVDA:T`
-- Actual network fee: `0.00000204472 ETH`
-- Hook claim: none
-- Allowance after settlement: zero
+Rehearsal manifests are local evidence only and are not official deployments.
 
-Both settlements emitted valid `SwapSettled` logs. `/api/receipts` decoded both transactions, and `/proofs` displayed two valid receipts. A syntactically valid unrelated hash remained marked `INVALID` and did not increase the receipt count.
+## Live-chain and fork evidence
 
-## Guided functional UI checks
+Latest-state fork tests used the current public Robinhood testnet state because the public RPC cannot serve the old pinned archival block.
 
-The following behaviors were exercised in a real browser:
+- v4: native→token and token→native settlement through the real PoolManager, including signed quotes and rebate accounting;
+- Synthra v3: native→TSLA and Permit2-backed TSLA→native settlement through the reviewed SwapRouter and WETH targets;
+- result: **2 passing**.
 
-- live V4 quote and candidate filtering;
-- fee, rebate, minimum received, recipient, and gas display;
-- slippage at `0.1%` and `1%`;
-- reverse route and multiple token pools;
-- custom recipient and automatic quote refresh;
-- route catalog refresh and honest empty verified-hook filter;
-- rebate-eligible and no-rebate calculations;
-- empty/invalid proof handling;
-- deployment treasury validation;
-- three-step wallet deployment plus onchain configuration verification;
-- native settlement;
-- exact ERC-20 approval and settlement;
-- receipt persistence through the shared manifest; and
-- manifest-only Setup state after browser-local deployment data was removed.
+The finalized, overlap-rescanned v4 registry was refreshed through block `155000635` and remains at **1,388 eligible direct pools**.
 
-Testing exposed and fixed two functional UI issues:
+The official deployment monitor also ran against live chain state with **zero failures**. It confirmed chain freshness, runtime bytecode at all configured targets, owner/treasury, unpaused state, policy `20 / 2500`, and the enabled direct-v4 adapter. Its remaining warnings are expected and release-relevant: official Router v1, pending source verification, and no manifest-declared timelock.
 
-1. tiny nonzero fee and receipt amounts were rounded too aggressively; fee/event formatting now preserves exact base-unit values; and
-2. `/setup` offered redeployment after local config was removed even when the shared manifest was ready; it now recognizes manifest deployment state.
+## Real PostgreSQL and indexer integration
 
-## Remaining external release gates
+PostgreSQL 17 was started locally and the actual `scripts/indexer.cjs` worker was run against the official Robinhood testnet RPC and Router v1 manifest.
 
-- Publish and verify both contract sources on Blockscout.
-- Configure dedicated RPC/indexing before public traffic.
-- Perform an independent security review before any mainnet use.
-- Keep hooked candidates disabled until their exact deployment, permissions, quote behavior, and execution data are reviewed.
+The worker:
+
+1. executed the complete `indexer/schema.sql` migration through PostgreSQL's simple-query path;
+2. safely reran the migration;
+3. indexed from deployment block `154833178` through finalized block `155000255` in bounded chunks;
+4. persisted a canonical cursor hash;
+5. recovered both historical official settlements; and
+6. returned current data through `/api/history` with source `postgres-indexer`.
+
+Indexed settlements:
+
+- `0xf76cdc7e4c1d20b43b5d7bfb62314599b78355b55f5965b41d6553126e5ab60b` at block `154836799`;
+- `0x17b294d4b5c212f83c8ea4536e9d2fd4f5b650a34297d46db2e5c27e59ab9904` at block `154842634`.
+
+After a final one-shot sync, a database-aware monitor run reported zero failures, a canonical cursor hash, 12-block lag (the configured confirmation depth), and a fresh cursor timestamp. This proves the PostgreSQL/indexer/API/monitor path; production still needs a durable hosted database and continuously running worker.
+
+## Production server, API, and browser smoke tests
+
+A production build was served with the real PostgreSQL connection.
+
+HTTP checks:
+
+- `/`, `/trade`, `/routes`, `/rebate`, `/proofs`, `/docs`, and `/setup` returned HTTP 200;
+- CSP, COOP, Permissions Policy, HSTS, and `X-Content-Type-Options` headers were present;
+- malformed quote content type returned 415;
+- malformed receipt hash returned 400;
+- `/api/history` returned both indexed settlements from PostgreSQL;
+- a live ETH→NVDA quote returned one real v4 candidate, current block identity, and `executable: false` with the explicit Router-v1 reason; and
+- both historical settlement hashes were re-decoded by `/api/receipts` with canonical transaction index, block hash, log identity, and more than 12 confirmations.
+
+A headless Chromium test exercised the hydrated `/trade` page at desktop and mobile sizes:
+
+- a live quote and candidate rendered;
+- no horizontal overflow or Next.js error page appeared;
+- no actionable browser console errors occurred;
+- the token picker exposed a labelled modal dialog, autofocus, Escape close, and keyboard focus containment;
+- the wallet chooser exposed a labelled dialog and correctly disabled WalletConnect when no project ID was configured; and
+- the 390-pixel mobile layout rendered the menu, quote, and candidate without overflow.
+
+## Historical Router v1 wallet evidence
+
+These transactions remain valid evidence for the currently official Router v1 only; they are not presented as Router v2 evidence.
+
+### ETH → NVDA:T
+
+- settlement: `0xf76cdc7e4c1d20b43b5d7bfb62314599b78355b55f5965b41d6553126e5ab60b`
+- block: `154836799`
+- block hash: `0xa9d7f002677b043995525068a38d5967e30e60ed4f377169bf45398f2616a806`
+- input: `0.0001 ETH`
+- routed input: `0.00009985 ETH`
+- output: `0.000013528386301086 NVDA:T`
+- gross fee / rebate / net fee: `0.0000002 / 0.00000005 / 0.00000015 ETH`
+
+### NVDA:T → ETH
+
+- exact approval: `0xb7397a5bcaef65fccb911809469e70468f7469fe8ea74b610aaf36eca5123dbe`
+- settlement: `0x17b294d4b5c212f83c8ea4536e9d2fd4f5b650a34297d46db2e5c27e59ab9904`
+- block: `154842634`
+- block hash: `0x60eea6bf48cd9b80e4992303d5a6e39c5ed652b45bdf9e07e2b69c33f9c1d0d8`
+- input: `0.00001 NVDA:T`
+- routed input: `0.000009985 NVDA:T`
+- output: `0.000074313192980675 ETH`
+- gross fee / rebate / net fee: `0.00000002 / 0.000000005 / 0.000000015 NVDA:T`
+- allowance after settlement: zero
+
+## Unfinished external release gates
+
+Router v2 must remain non-executable until all of the following are complete:
+
+1. deploy a v2 candidate with a dedicated release key and RPC;
+2. verify Router, both adapters, and timelock source on Blockscout;
+3. use the enforced minimum 48-hour timelock, then schedule, wait for, and execute all three `acceptOwnership()` calls;
+4. run candidate verification until ownership and source gates both pass;
+5. configure a durable hosted PostgreSQL worker, fallback RPC, monitoring, and alert webhook;
+6. configure the production quote-signer key matching the onchain signer;
+7. supply a real WalletConnect project ID and complete external-wallet QR pairing; the no-project-ID fail-closed UI was tested, but real pairing was not;
+8. perform v2 E2E swaps from a non-treasury wallet and verify indexed per-step receipts;
+9. keep Aggregator Hook mode disabled until a specific deployment, permissions, quote semantics, calldata, and runtime codehash are independently reviewed; and
+10. complete independent audit, governance review, incident drill, and bug-bounty readiness before any use with assets of value.
+
+No local rehearsal, fork test, or generated candidate should be described as the official Router v2 while the shared manifest remains Router v1.
