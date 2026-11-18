@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -11,19 +11,21 @@ contract MockAdapter is IPermAdapter {
     address public immutable router;
     uint256 public immutable numerator;
     uint256 public immutable denominator;
+    bytes32 public immutable mockRouteId;
 
     constructor(address router_, uint256 numerator_, uint256 denominator_) {
         router = router_;
         numerator = numerator_;
         denominator = denominator_;
+        mockRouteId = keccak256(abi.encode("MOCK", numerator_, denominator_));
     }
 
     receive() external payable {}
 
-    function swapExactInput(address tokenIn, address tokenOut, uint256 amountIn, address recipient, bytes calldata)
+    function swapExactInput(address tokenIn, address tokenOut, uint256 amountIn, address recipient, bytes calldata routeData)
         external
         payable
-        returns (uint256 amountOut, address hook)
+        returns (uint256 amountOut, address hook, bytes32 routeId)
     {
         require(msg.sender == router, "ONLY_ROUTER");
         if (tokenIn == address(0)) require(msg.value == amountIn, "VALUE");
@@ -36,6 +38,7 @@ contract MockAdapter is IPermAdapter {
         } else {
             IERC20(tokenOut).safeTransfer(recipient, amountOut);
         }
-        return (amountOut, address(0));
+        hook = routeData.length == 32 ? abi.decode(routeData, (address)) : address(0);
+        return (amountOut, hook, mockRouteId);
     }
 }
