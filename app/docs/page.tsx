@@ -50,11 +50,12 @@ export default function DocsPage() {
             <span className="section-kicker">IMPLEMENTED TESTNET PATH</span>
             <h2>Real contracts, real V4 state, no invented deployment.</h2>
             <div className="decision-grid">
-              <article><span>01</span><h3>PermRouter</h3><p>Exact-input settlement, immutable versioned fee policies, recipient minimum, quote replay protection, pause control, referral conservation, and event-backed receipts.</p></article>
-              <article><span>02</span><h3>Restricted V4 adapter</h3><p>One immutable PoolManager, one exact-input pool per candidate, full-spend enforcement, empty hook data, explicit hook allowlist, and no arbitrary target or calldata.</p></article>
+              <article><span>01</span><h3>PermRouter v2</h3><p>EIP-712 authorization, up to four continuous steps, pull-fee reserves, Permit2, recipient minimum, replay protection, pause guardian, and event-backed evidence.</p></article>
+              <article><span>02</span><h3>Restricted V4 adapter</h3><p>Immutable PoolManager, exact-input pool steps, full-spend verification, and runtime-codehash-pinned hooks with a distinct hook evidence identity.</p></article>
+              <article><span>03</span><h3>Synthra V3 adapter</h3><p>Immutable reviewed Router02 and WETH targets, native wrapping, approved fee tiers, exact allowances, codehash checks, and no arbitrary calldata.</p></article>
             </div>
-            <div className="docs-callout"><b>Verified on chain state:</b> the adapter test executes ETH → NVDA test asset and the reverse direction against the deployed PoolManager on a Robinhood Chain testnet fork. The public deployment still requires an owner wallet signature and testnet gas.</div>
-            <div className="docs-callout warning"><b>Coverage boundary:</b> chain 46630 has a verified Uniswap v4 deployment, but the reviewed V2/V3 addresses used on mainnet have no bytecode there. The interface reports those candidates unavailable instead of fabricating multi-venue coverage.</div>
+            <div className="docs-callout"><b>Verified against live fork state:</b> tests execute both directions through the real v4 PoolManager and Synthra v3 router, including an actual Permit2 signature transfer.</div>
+            <div className="docs-callout warning"><b>Release boundary:</b> the shared manifest still points to Router v1, so v2 quotes remain read-only until candidate verification, governance acceptance, and explicit promotion. No Aggregator Hook deployment has been established on chain 46630.</div>
           </section>
 
           <section className="docs-section">
@@ -97,7 +98,7 @@ export default function DocsPage() {
           <section id="rebate" className="docs-section">
             <span className="section-kicker">B · PERM FEE REBATE</span>
             <h2>One versioned discount, settled instantly</h2>
-            <p>The first release uses a simple reduction of Perm&apos;s own fee. It does not require claim contracts, campaign points, staking, or a second transaction.</p>
+            <p>The user rebate is an immediate reduction of Perm&apos;s own fee, so it needs no user claim, campaign points, staking, or second transaction. Treasury and referral fees use separate pull-payment reserves so a failing beneficiary cannot block the swap.</p>
             <pre className="formula"><code>{`grossPermFee = floor(feeBasisAmount × platformFeeBps / 10,000)
 rebate      = floor(grossPermFee × rebateShareBps / 10,000)
 netPermFee  = grossPermFee − rebate
@@ -109,7 +110,7 @@ netPermFee  = grossPermFee − rebate
               <div className="green"><small>REBATE</small><b>0.05 USDG</b></div><i>=</i>
               <div><small>NET PERM FEE</small><b>0.15 USDG</b></div>
             </div>
-            <p className="docs-caption">Policy v1 is fixed at a 0.20% gross Perm fee and a 25% rebate share of that fee, producing a 0.15% net Perm fee.</p>
+            <p className="docs-caption">Initial policy v1 uses a 0.20% gross Perm fee and a 25% rebate share of that fee, producing a 0.15% net Perm fee. The quote signs the exact immutable policy version read from chain.</p>
             <ul className="docs-list">
               <li>Rebate cannot exceed the gross Perm fee. A zero gross fee creates a zero rebate in this design.</li>
               <li>Referral, integrator, treasury, and rebate shares cannot spend the same portion twice.</li>
