@@ -9,5 +9,7 @@ out/
 .hardhat-cache/
 contracts/artifacts/
 coverage/
+coverage.json
 playwright-report/
 test-results/
+deployments/*.rehearsal.json

@@ -1,8 +1,10 @@
 require("@nomicfoundation/hardhat-ethers");
 require("@nomicfoundation/hardhat-chai-matchers");
 require("@nomicfoundation/hardhat-verify");
+require("solidity-coverage");
 
 const forkEnabled = process.env.RUN_FORK_TESTS === "1";
+const forkBlock = process.env.FORK_BLOCK_NUMBER ? Number(process.env.FORK_BLOCK_NUMBER) : undefined;
 
 module.exports = {
   solidity: {
@@ -37,8 +39,8 @@ module.exports = {
       hardfork: "cancun",
       forking: {
         url: process.env.RH_TESTNET_RPC_URL || "https://rpc.testnet.chain.robinhood.com",
-        blockNumber: Number(process.env.FORK_BLOCK_NUMBER || "154719917"),
-        httpHeaders: { "User-Agent": "Mozilla/5.0 PermIntegration/1.0" },
+        ...(forkBlock ? { blockNumber: forkBlock } : {}),
+        httpHeaders: { "User-Agent": "Mozilla/5.0 PermIntegration/2.0" },
       },
     } : { hardfork: "cancun" },
     robinhoodTestnet: {
