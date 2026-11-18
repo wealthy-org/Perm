@@ -585,16 +585,17 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   // ---------- clouds and atmospheric particles ----------
   const cloudTexture = createCloudTexture();
   const cloudCount = mobile ? 34 : 72;
-  const driftingClouds: Array<{ cloud: THREE.Sprite; startX: number; startY: number; speed: number }> = [];
+  const driftingClouds: Array<{ cloud: THREE.Sprite; material: THREE.SpriteMaterial; baseOpacity: number; startX: number; startY: number; speed: number }> = [];
   for (let index = 0; index < cloudCount; index++) {
-    const material = new THREE.SpriteMaterial({ map: cloudTexture, transparent: true, depthWrite: false, opacity: 0.34 + Math.random() * 0.3, fog: true });
+    const baseOpacity = 0.34 + Math.random() * 0.3;
+    const material = new THREE.SpriteMaterial({ map: cloudTexture, transparent: true, depthWrite: false, opacity: baseOpacity, fog: true });
     const cloud = new THREE.Sprite(material);
     const scale = 24 + Math.random() * 45;
     const startX = (Math.random() - 0.5) * 280;
     const startY = 20 + Math.random() * 26;
     cloud.scale.set(scale * 1.75, scale, 1);
     cloud.position.set(startX, startY, 70 - Math.random() * 390);
-    driftingClouds.push({ cloud, startX, startY, speed: 0.34 + Math.random() * 0.34 });
+    driftingClouds.push({ cloud, material, baseOpacity, startX, startY, speed: 0.34 + Math.random() * 0.34 });
     scene.add(cloud);
   }
   animated.push((time) => driftingClouds.forEach(({ cloud, startX, startY, speed }, index) => {
@@ -685,8 +686,14 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
     if (Math.abs(target - current) < 0.00001) current = target;
     readCamera(current);
     const fogReveal = smooth(clamp01((current - 0.10) / 0.10));
-    sceneFog.near = THREE.MathUtils.lerp(4, 220, fogReveal);
-    sceneFog.far = THREE.MathUtils.lerp(62, 980, fogReveal);
+    const routeClarity = smooth(clamp01((current - 0.24) / 0.14));
+    sceneFog.near = THREE.MathUtils.lerp(4, 220, fogReveal) + routeClarity * 100;
+    sceneFog.far = THREE.MathUtils.lerp(62, 980, fogReveal) + routeClarity * 420;
+    // Keep the opening cloud reveal intact, then clear the camera's path once
+    // it enters the causeway so the columns, stations, and route remain legible.
+    const cloudClearance = smooth(clamp01((current - 0.18) / 0.14));
+    const cloudOpacityScale = THREE.MathUtils.lerp(1, 0.14, cloudClearance);
+    driftingClouds.forEach(({ material, baseOpacity }) => { material.opacity = baseOpacity * cloudOpacityScale; });
     const motion = reducedMotion ? 0 : 1;
     camera.position.set(
       cameraPosition.x + pointerX * 0.16 * motion,
