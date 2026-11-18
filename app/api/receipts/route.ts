@@ -2,87 +2,198 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   decodeEventLog,
   formatEther,
-  getAddress,
-  isAddress,
   isHash,
   keccak256,
   toHex,
   type Address,
   type Hex,
 } from "viem";
-import { permRouterAbi } from "@/lib/web3/abis";
+import { permRouterAbi, permRouterV1Abi } from "@/lib/web3/abis";
 import {
   PERM_ROUTER_ADDRESS,
   RH_TESTNET_CHAIN_ID,
+  ROUTER_VERSION,
   createRobinhoodPublicClient,
 } from "@/lib/web3/config";
+import { boundedEnvironmentInteger, consumeRateLimit, requestIdentity, safeServerError } from "@/lib/server/runtime";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const DIRECT_PROVIDER = keccak256(toHex("UNISWAP_V4_DIRECT"));
+const RECEIPT_MIN_CONFIRMATIONS = BigInt(boundedEnvironmentInteger("RECEIPT_MIN_CONFIRMATIONS", 12, 1, 10_000));
+
+const PROVIDERS: Record<string, string> = {
+  [keccak256(toHex("UNISWAP_V4_DIRECT"))]: "Uniswap v4 direct pool",
+  [keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"))]: "Verified v4 Aggregator Hook",
+  [keccak256(toHex("SYNTHRA_V3"))]: "Synthra v3 pool",
+};
+
+function providerLabel(providerId: Hex) {
+  return PROVIDERS[providerId.toLowerCase()] || "Approved Perm adapter";
+}
 
 export async function GET(request: NextRequest) {
+  const limit = consumeRateLimit(`receipt:${requestIdentity(request)}`, 30, 1);
+  if (!limit.allowed) {
+    return NextResponse.json({ error: "Too many receipt requests" }, {
+      status: 429,
+      headers: { "retry-after": String(limit.retryAfter), "cache-control": "no-store" },
+    });
+  }
   const tx = request.nextUrl.searchParams.get("tx") as Hex | null;
-  const routerParam = request.nextUrl.searchParams.get("router");
+  if (request.nextUrl.searchParams.has("router")) {
+    return NextResponse.json({ error: "Router overrides are not accepted; proofs use the official deployment manifest" }, { status: 400 });
+  }
   if (!tx || !isHash(tx)) return NextResponse.json({ error: "A valid transaction hash is required" }, { status: 400 });
-  if (routerParam && !isAddress(routerParam)) return NextResponse.json({ error: "Invalid router address" }, { status: 400 });
-  const router = (routerParam ? getAddress(routerParam) : PERM_ROUTER_ADDRESS) as Address | undefined;
-  if (!router) return NextResponse.json({ error: "PermRouter deployment is not configured" }, { status: 503 });
+  if (!PERM_ROUTER_ADDRESS) return NextResponse.json({ error: "PermRouter deployment is not configured" }, { status: 503 });
+  const routerAddress = PERM_ROUTER_ADDRESS;
 
   const client = createRobinhoodPublicClient();
   try {
     const receipt = await client.getTransactionReceipt({ hash: tx });
-    const settlementLog = receipt.logs.find((log) => log.address.toLowerCase() === router.toLowerCase());
-    if (!settlementLog) return NextResponse.json({ error: "No Perm settlement event exists in this transaction" }, { status: 404 });
-    let decoded;
-    try {
-      decoded = decodeEventLog({ abi: permRouterAbi, eventName: "SwapSettled", data: settlementLog.data, topics: settlementLog.topics });
-    } catch {
-      return NextResponse.json({ error: "The router log is not a valid SwapSettled receipt" }, { status: 422 });
+    if (receipt.status !== "success") {
+      return NextResponse.json({ error: "The transaction reverted and cannot produce a Perm settlement proof" }, { status: 422 });
     }
     const [block, latest] = await Promise.all([
       client.getBlock({ blockNumber: receipt.blockNumber }),
       client.getBlockNumber(),
     ]);
-    const args = decoded.args;
-    const providerLabel = args.providerId.toLowerCase() === DIRECT_PROVIDER.toLowerCase()
-      ? "Uniswap v4 direct pool"
-      : "Approved Perm adapter";
-    return NextResponse.json({
+    if (!block.hash || block.hash.toLowerCase() !== receipt.blockHash.toLowerCase()) {
+      return NextResponse.json({ error: "The receipt block is no longer canonical" }, { status: 409 });
+    }
+    const confirmations = latest - receipt.blockNumber + 1n;
+    if (confirmations < RECEIPT_MIN_CONFIRMATIONS) {
+      return NextResponse.json({ error: `Receipt is awaiting ${RECEIPT_MIN_CONFIRMATIONS} confirmations`, confirmations: confirmations.toString() }, { status: 409 });
+    }
+
+    const routerLogs = receipt.logs.filter((log) => log.address.toLowerCase() === routerAddress.toLowerCase());
+    const stepEvents = new Map<string, Array<Record<string, unknown>>>();
+    if (ROUTER_VERSION >= 2) {
+      for (const log of routerLogs) {
+        try {
+          const decoded = decodeEventLog({ abi: permRouterAbi, eventName: "RouteStepSettled", data: log.data, topics: log.topics });
+          const args = decoded.args;
+          const key = args.receiptId.toLowerCase();
+          const current = stepEvents.get(key) || [];
+          current.push({
+            stepIndex: Number(args.stepIndex),
+            providerId: args.providerId,
+            providerLabel: providerLabel(args.providerId),
+            adapter: args.adapter,
+            tokenIn: args.tokenIn,
+            tokenOut: args.tokenOut,
+            amountIn: args.amountIn.toString(),
+            amountOut: args.amountOut.toString(),
+            stepRouteId: args.stepRouteId,
+            hook: args.hook,
+            hookCodehash: args.hookCodehash,
+            logIndex: log.logIndex,
+          });
+          stepEvents.set(key, current);
+        } catch {
+          // This router log is not a RouteStepSettled event.
+        }
+      }
+    }
+
+    const settlements: Array<Record<string, unknown>> = [];
+    for (const log of routerLogs) {
+      try {
+        if (ROUTER_VERSION >= 2) {
+          const decoded = decodeEventLog({ abi: permRouterAbi, eventName: "SwapSettled", data: log.data, topics: log.topics });
+          const args = decoded.args;
+          const steps = (stepEvents.get(args.receiptId.toLowerCase()) || []).sort((a, b) => Number(a.stepIndex) - Number(b.stepIndex));
+          settlements.push({
+            receiptId: args.receiptId,
+            quoteId: args.quoteId,
+            account: args.account,
+            recipient: args.recipient,
+            tokenIn: args.tokenIn,
+            tokenOut: args.tokenOut,
+            amountIn: args.amountIn.toString(),
+            routedInput: args.routedInput.toString(),
+            amountOut: args.amountOut.toString(),
+            grossFee: args.grossFee.toString(),
+            rebate: args.rebate.toString(),
+            netFee: args.netFee.toString(),
+            referralFee: args.referralFee.toString(),
+            treasuryFee: args.treasuryFee.toString(),
+            policyVersion: Number(args.policyVersion),
+            routeId: args.routeId,
+            routeHash: args.routeHash,
+            steps,
+            logIndex: log.logIndex,
+          });
+        } else {
+          const decoded = decodeEventLog({ abi: permRouterV1Abi, eventName: "SwapSettled", data: log.data, topics: log.topics });
+          const args = decoded.args;
+          settlements.push({
+            receiptId: args.receiptId,
+            quoteId: args.quoteId,
+            account: args.account,
+            recipient: args.recipient,
+            tokenIn: args.tokenIn,
+            tokenOut: args.tokenOut,
+            amountIn: args.amountIn.toString(),
+            routedInput: args.routedInput.toString(),
+            amountOut: args.amountOut.toString(),
+            grossFee: args.grossFee.toString(),
+            rebate: args.rebate.toString(),
+            netFee: args.netFee.toString(),
+            referralFee: args.referralFee.toString(),
+            treasuryFee: undefined,
+            policyVersion: Number(args.policyVersion),
+            routeId: args.providerId,
+            routeHash: undefined,
+            steps: [{
+              stepIndex: 0,
+              providerId: args.providerId,
+              providerLabel: providerLabel(args.providerId),
+              adapter: args.adapter,
+              tokenIn: args.tokenIn,
+              tokenOut: args.tokenOut,
+              amountIn: args.routedInput.toString(),
+              amountOut: args.amountOut.toString(),
+              stepRouteId: undefined,
+              hook: args.hook,
+              hookCodehash: undefined,
+              logIndex: log.logIndex,
+            }],
+            logIndex: log.logIndex,
+            legacy: true,
+          });
+        }
+      } catch {
+        // Filter by the exact event ABI rather than accepting an arbitrary router-address log.
+      }
+    }
+    if (!settlements.length) {
+      return NextResponse.json({ error: "No valid SwapSettled event from the official PermRouter exists in this transaction" }, { status: 404 });
+    }
+
+    const transaction = {
       chainId: RH_TESTNET_CHAIN_ID,
+      routerVersion: ROUTER_VERSION,
+      router: routerAddress as Address,
       transactionHash: receipt.transactionHash,
+      transactionIndex: receipt.transactionIndex,
       blockNumber: receipt.blockNumber.toString(),
+      blockHash: receipt.blockHash,
       blockTimestamp: Number(block.timestamp),
-      logIndex: settlementLog.logIndex,
       status: receipt.status,
-      confirmations: (latest - receipt.blockNumber + 1n).toString(),
+      confirmations: confirmations.toString(),
       gasUsed: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice.toString(),
       actualNetworkFeeWei: (receipt.gasUsed * receipt.effectiveGasPrice).toString(),
       actualNetworkFeeEth: formatEther(receipt.gasUsed * receipt.effectiveGasPrice),
-      receiptId: args.receiptId,
-      quoteId: args.quoteId,
-      account: args.account,
-      recipient: args.recipient,
-      tokenIn: args.tokenIn,
-      tokenOut: args.tokenOut,
-      amountIn: args.amountIn.toString(),
-      routedInput: args.routedInput.toString(),
-      amountOut: args.amountOut.toString(),
-      grossFee: args.grossFee.toString(),
-      rebate: args.rebate.toString(),
-      netFee: args.netFee.toString(),
-      referralFee: args.referralFee.toString(),
-      policyVersion: Number(args.policyVersion),
-      providerId: args.providerId,
-      providerLabel,
-      adapter: args.adapter,
-      hook: args.hook,
       explorerUrl: `https://explorer.testnet.chain.robinhood.com/tx/${receipt.transactionHash}`,
-    }, { headers: { "cache-control": "no-store" } });
+    };
+    return NextResponse.json({ transaction, settlements }, { headers: { "cache-control": "public, max-age=15, stale-while-revalidate=30" } });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "Receipt lookup failed";
-    return NextResponse.json({ error: message }, { status: 502 });
+    const name = (cause as { name?: string }).name || "";
+    if (name.includes("TransactionReceiptNotFound")) {
+      return NextResponse.json({ error: "Transaction receipt was not found on Robinhood Chain testnet" }, { status: 404 });
+    }
+    return NextResponse.json({ error: safeServerError("receipts", cause, "Receipt lookup failed") }, { status: 502 });
   }
 }
