@@ -1,34 +1,53 @@
 import type { Address, Hex } from "viem";
 
+export type QuoteRouteStep = {
+  providerId: "UNISWAP_V4_DIRECT" | "UNISWAP_V4_AGGREGATOR_HOOK" | "SYNTHRA_V3";
+  providerLabel: string;
+  adapter: Address;
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: string;
+  amountOut: string;
+  gasEstimate: string;
+  poolId: Hex;
+  poolFee: number;
+  hook: Address;
+  verifiedHook: boolean;
+  hookCodehash?: Hex;
+  data: Hex;
+};
+
 export type LiveQuoteCandidate = {
   providerId: string;
   providerLabel: string;
-  poolId: Hex;
-  pool: {
-    currency0: Address;
-    currency1: Address;
-    fee: number;
-    tickSpacing: number;
-    hooks: Address;
-  };
+  routeKind: "direct" | "multi-hop" | "cross-venue" | "aggregator-hook";
+  routeId: Hex;
+  routeData: Hex;
+  steps: QuoteRouteStep[];
   amountOut: string;
   minAmountOut: string;
   gasEstimate: string;
   estimatedNetworkFeeWei: string;
-  routeData: Hex;
+  estimatedGasInOutput?: string;
+  gasAdjustedOutput?: string;
+  gasNormalized: boolean;
+  priceImpactBps?: number;
   hook: Address;
   verifiedHook: boolean;
 };
 
 export type LiveQuote = {
+  contractVersion: number;
   chainId: number;
   quoteId: Hex;
+  quoteSignature: Hex;
   quotedAt: number;
   deadline: number;
   policyVersion: number;
+  platformFeeBps: number;
+  rebateShareBps: number;
   account: Address;
   recipient: Address;
-  adapter: Address;
   referrer: Address;
   tokenIn: Address;
   tokenOut: Address;
@@ -38,7 +57,9 @@ export type LiveQuote = {
   netFee: string;
   routedInput: string;
   slippageBps: number;
+  routingMode: "best" | "v4" | "v3" | "hooks";
   blockNumber: string;
+  requestFingerprint: Hex;
   executable: boolean;
   deploymentReason?: string;
   selected: LiveQuoteCandidate;
