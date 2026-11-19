@@ -22,6 +22,7 @@ function quoteValue(account, request) {
     tokenOut: request.tokenOut,
     amountIn: request.amountIn,
     minAmountOut: request.minAmountOut,
+    gasEstimate: request.gasEstimate,
     recipient: request.recipient,
     deadline: request.deadline,
     quotedAt: request.quotedAt,
@@ -47,6 +48,7 @@ async function signRequest(router, signer, account, rawRequest) {
       { name: "tokenOut", type: "address" },
       { name: "amountIn", type: "uint256" },
       { name: "minAmountOut", type: "uint256" },
+      { name: "gasEstimate", type: "uint256" },
       { name: "recipient", type: "address" },
       { name: "deadline", type: "uint256" },
       { name: "quotedAt", type: "uint64" },
@@ -68,6 +70,7 @@ function makeRequest(adapter, tokenIn, tokenOut, amountIn, recipient, quotedAt, 
     tokenOut,
     amountIn,
     minAmountOut: 1,
+    gasEstimate: 500_000,
     recipient,
     deadline: quotedAt + 90,
     quotedAt,
@@ -132,6 +135,32 @@ describe("PermRouter v2", function () {
     expect(await tokenIn.balanceOf(treasury.address)).to.equal(ethers.parseEther("0.15"));
   });
 
+  it("pins adapter runtime codehashes and rejects code changed after allowlisting", async function () {
+    const { owner, quoteSigner, user, recipient, tokenIn, tokenOut, router } = await fixture();
+    const MutableAdapter = await ethers.getContractFactory("MockMutableAdapter");
+    const mutable = await MutableAdapter.deploy(await router.getAddress());
+    const mutableAddress = await mutable.getAddress();
+    await expect(router.connect(owner).configureAdapter(mutableAddress, ethers.id("MUTABLE"), true))
+      .to.emit(router, "AdapterConfigured");
+    const pinnedCodehash = await router.adapterCodehashes(mutableAddress);
+    expect(pinnedCodehash).to.equal(ethers.keccak256(await ethers.provider.getCode(mutableAddress)));
+
+    // Hardhat's test-only RPC mutation emulates a metamorphic implementation after governance review.
+    await ethers.provider.send("hardhat_setCode", [mutableAddress, "0x60006000fd"]);
+    const changedCodehash = ethers.keccak256(await ethers.provider.getCode(mutableAddress));
+    expect(changedCodehash).to.not.equal(pinnedCodehash);
+
+    const amountIn = ethers.parseEther("1");
+    const t = await now();
+    const signed = await signRequest(router, quoteSigner, user.address, makeRequest(
+      mutableAddress, await tokenIn.getAddress(), await tokenOut.getAddress(), amountIn, recipient.address, t,
+    ));
+    await tokenIn.connect(user).approve(await router.getAddress(), amountIn);
+    await expect(router.connect(user).swapExactInput(signed.request, signed.signature, EMPTY_PERMIT))
+      .to.be.revertedWithCustomError(router, "AdapterCodehashMismatch")
+      .withArgs(mutableAddress, pinnedCodehash, changedCodehash);
+  });
+
   it("rejects forged, mutated, replayed, stale, future, expired and wrong-chain quotes", async function () {
     const { quoteSigner, user, recipient, attacker, tokenIn, tokenOut, router, adapter } = await fixture();
     const amountIn = ethers.parseEther("1");
@@ -145,6 +174,8 @@ describe("PermRouter v2", function () {
       .to.be.revertedWithCustomError(router, "InvalidQuoteSigner");
     await expect(router.connect(user).swapExactInput({ ...signed.request, minAmountOut: 2 }, signed.signature, EMPTY_PERMIT))
       .to.be.revertedWithCustomError(router, "QuoteBindingMismatch");
+    await expect(router.connect(user).swapExactInput({ ...signed.request, gasEstimate: 500_001 }, signed.signature, EMPTY_PERMIT))
+      .to.be.revertedWithCustomError(router, "QuoteBindingMismatch");
 
     const wrongChain = await signRequest(router, quoteSigner, user.address, { ...raw, chainId: 46630 });
     await expect(router.connect(user).swapExactInput(wrongChain.request, wrongChain.signature, EMPTY_PERMIT))
@@ -152,7 +183,7 @@ describe("PermRouter v2", function () {
     const expired = await signRequest(router, quoteSigner, user.address, { ...raw, deadline: t - 1 });
     await expect(router.connect(user).swapExactInput(expired.request, expired.signature, EMPTY_PERMIT))
       .to.be.revertedWithCustomError(router, "DeadlineExpired");
-    const stale = await signRequest(router, quoteSigner, user.address, { ...raw, quotedAt: t - 121, deadline: t + 5 });
+    const stale = await signRequest(router, quoteSigner, user.address, { ...raw, quotedAt: t - 121, deadline: t + 300 });
     await expect(router.connect(user).swapExactInput(stale.request, stale.signature, EMPTY_PERMIT))
       .to.be.revertedWithCustomError(router, "QuoteStale");
     const future = await signRequest(router, quoteSigner, user.address, { ...raw, quotedAt: t + 100, deadline: t + 200 });
@@ -160,6 +191,12 @@ describe("PermRouter v2", function () {
       .to.be.revertedWithCustomError(router, "QuoteFromFuture");
     const oversized = await signRequest(router, quoteSigner, user.address, { ...raw, amountIn: 1n << 127n });
     await expect(router.connect(user).swapExactInput(oversized.request, oversized.signature, EMPTY_PERMIT))
+      .to.be.revertedWithCustomError(router, "AmountTooLarge");
+    const zeroGas = await signRequest(router, quoteSigner, user.address, { ...raw, gasEstimate: 0 });
+    await expect(router.connect(user).swapExactInput(zeroGas.request, zeroGas.signature, EMPTY_PERMIT))
+      .to.be.revertedWithCustomError(router, "InvalidAmount");
+    const excessiveGas = await signRequest(router, quoteSigner, user.address, { ...raw, gasEstimate: 30_000_001 });
+    await expect(router.connect(user).swapExactInput(excessiveGas.request, excessiveGas.signature, EMPTY_PERMIT))
       .to.be.revertedWithCustomError(router, "AmountTooLarge");
 
     await router.connect(user).swapExactInput(signed.request, signed.signature, EMPTY_PERMIT);
@@ -228,6 +265,13 @@ describe("PermRouter v2", function () {
     expect(step.args.providerId).to.equal(hookProviderId);
     expect(step.args.hook).to.equal(attacker.address);
     expect(step.args.hookCodehash).to.equal(ethers.keccak256("0x"));
+
+    await router.connect(owner).configureHookProvider(await adapter.getAddress(), ethers.ZeroHash);
+    const disabledRaw = { ...raw, quoteId: ethers.ZeroHash, quotedAt: await now(), deadline: (await now()) + 90 };
+    const disabled = await signRequest(router, quoteSigner, user.address, disabledRaw);
+    await tokenIn.connect(user).approve(await router.getAddress(), amountIn);
+    await expect(router.connect(user).swapExactInput(disabled.request, disabled.signature, EMPTY_PERMIT))
+      .to.be.revertedWithCustomError(router, "InvalidRoute");
   });
 
   it("uses Permit2 signature transfer when supplied", async function () {

@@ -7,7 +7,7 @@ const TYPES = {
   PermQuote: [
     { name: "account", type: "address" }, { name: "tokenIn", type: "address" },
     { name: "tokenOut", type: "address" }, { name: "amountIn", type: "uint256" },
-    { name: "minAmountOut", type: "uint256" }, { name: "recipient", type: "address" },
+    { name: "minAmountOut", type: "uint256" }, { name: "gasEstimate", type: "uint256" }, { name: "recipient", type: "address" },
     { name: "deadline", type: "uint256" }, { name: "quotedAt", type: "uint64" },
     { name: "policyVersion", type: "uint32" }, { name: "chainId", type: "uint256" },
     { name: "referrer", type: "address" }, { name: "routeHash", type: "bytes32" },
@@ -48,14 +48,14 @@ async function signedSwap(f, amountIn) {
   }]]);
   const request = {
     tokenIn: await f.tokenIn.getAddress(), tokenOut: await f.tokenOut.getAddress(), amountIn,
-    minAmountOut: 1n, recipient: f.recipient.address, deadline: block.timestamp + 90,
+    minAmountOut: 1n, gasEstimate: 500_000n, recipient: f.recipient.address, deadline: block.timestamp + 90,
     quotedAt: block.timestamp, policyVersion: 1, chainId: 31337,
     quoteId: ethers.ZeroHash, referrer: f.referrer.address, routeData,
   };
   const domain = { name: "Perm", version: "2", chainId: 31337, verifyingContract: await f.router.getAddress() };
   const message = {
     account: f.user.address, tokenIn: request.tokenIn, tokenOut: request.tokenOut,
-    amountIn, minAmountOut: 1n, recipient: request.recipient, deadline: request.deadline,
+    amountIn, minAmountOut: 1n, gasEstimate: request.gasEstimate, recipient: request.recipient, deadline: request.deadline,
     quotedAt: request.quotedAt, policyVersion: 1, chainId: 31337,
     referrer: request.referrer, routeHash: ethers.keccak256(routeData),
   };

@@ -36,12 +36,13 @@ export const permV3AdapterAbi = parseAbi([
 ]);
 
 export const permRouterAbi = parseAbi([
-  "function swapExactInput((address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request,bytes quoteSignature,(uint256 nonce,uint256 deadline,bytes signature) permitInput) payable returns (bytes32 receiptId,(uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint256 treasuryFee,uint256 routedInput,uint256 amountOut) settled)",
-  "function quoteIdFor(address account,(address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request) view returns (bytes32)",
+  "function swapExactInput((address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 gasEstimate,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request,bytes quoteSignature,(uint256 nonce,uint256 deadline,bytes signature) permitInput) payable returns (bytes32 receiptId,(uint256 grossFee,uint256 rebate,uint256 netFee,uint256 referralFee,uint256 treasuryFee,uint256 routedInput,uint256 amountOut) settled)",
+  "function quoteIdFor(address account,(address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 gasEstimate,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,bytes32 quoteId,address referrer,bytes routeData) request) view returns (bytes32)",
   "function previewFees(uint256 amountIn,uint32 policyVersion) view returns (uint256 grossFee,uint256 rebate,uint256 netFee,uint256 routedInput)",
   "function activePolicyVersion() view returns (uint32)",
   "function feePolicies(uint32 version) view returns (uint16 platformFeeBps,uint16 rebateShareBps,bool enabled,bool exists)",
   "function adapters(address adapter) view returns (bool enabled,bytes32 providerId)",
+  "function adapterCodehashes(address adapter) view returns (bytes32 codehash)",
   "function hookProviderIds(address adapter) view returns (bytes32 providerId)",
   "function configureHookProvider(address adapter,bytes32 providerId)",
   "function quoteSigner() view returns (address)",
