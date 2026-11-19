@@ -23,9 +23,10 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     uint256 public constant MAX_PLATFORM_FEE_BPS = 100; // hard cap: 1%
     uint256 public constant MAX_QUOTE_AGE = 120 seconds;
     uint256 public constant MAX_ROUTE_STEPS = 4;
+    uint256 public constant MAX_QUOTED_GAS = 30_000_000;
     uint32 public constant INITIAL_POLICY_VERSION = 1;
     bytes32 public constant QUOTE_TYPEHASH = keccak256(
-        "PermQuote(address account,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,address referrer,bytes32 routeHash)"
+        "PermQuote(address account,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 gasEstimate,address recipient,uint256 deadline,uint64 quotedAt,uint32 policyVersion,uint256 chainId,address referrer,bytes32 routeHash)"
     );
 
     struct FeePolicy {
@@ -52,6 +53,7 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         address tokenOut;
         uint256 amountIn;
         uint256 minAmountOut;
+        uint256 gasEstimate;
         address recipient;
         uint256 deadline;
         uint64 quotedAt;
@@ -80,6 +82,7 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
 
     mapping(uint32 version => FeePolicy) public feePolicies;
     mapping(address adapter => AdapterConfig) public adapters;
+    mapping(address adapter => bytes32 codehash) public adapterCodehashes;
     mapping(address adapter => bytes32 providerId) public hookProviderIds;
     mapping(address referrer => uint16 shareBpsOfNetFee) public referralShares;
     mapping(bytes32 quoteId => bool) public consumedQuotes;
@@ -96,7 +99,7 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     event FeePolicyPublished(uint32 indexed version, uint16 platformFeeBps, uint16 rebateShareBps, bool enabled);
     event ActiveFeePolicyChanged(uint32 indexed previousVersion, uint32 indexed newVersion);
     event FeePolicyStatusChanged(uint32 indexed version, bool enabled);
-    event AdapterConfigured(address indexed adapter, bytes32 indexed providerId, bool enabled);
+    event AdapterConfigured(address indexed adapter, bytes32 indexed providerId, bool enabled, bytes32 codehash);
     event HookProviderConfigured(address indexed adapter, bytes32 indexed providerId);
     event ReferralConfigured(address indexed referrer, uint16 shareBpsOfNetFee);
     event TreasuryChanged(address indexed previousTreasury, address indexed newTreasury);
@@ -139,6 +142,7 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     );
 
     error AdapterDisabled(address adapter);
+    error AdapterCodehashMismatch(address adapter, bytes32 expected, bytes32 actual);
     error AdapterOutputMismatch(uint256 reported, uint256 actual);
     error AlreadyConsumed(bytes32 quoteId);
     error AmountTooLarge();
@@ -196,6 +200,7 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
                 request.tokenOut,
                 request.amountIn,
                 request.minAmountOut,
+                request.gasEstimate,
                 request.recipient,
                 request.deadline,
                 request.quotedAt,
@@ -261,6 +266,11 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         for (uint256 i; i < steps.length; ++i) {
             RouteStep memory step = steps[i];
             AdapterConfig memory config = adapters[step.adapter];
+            bytes32 expectedCodehash = adapterCodehashes[step.adapter];
+            bytes32 actualCodehash = step.adapter.codehash;
+            if (expectedCodehash == bytes32(0) || actualCodehash != expectedCodehash) {
+                revert AdapterCodehashMismatch(step.adapter, expectedCodehash, actualCodehash);
+            }
             // Routes are signature-bound and hard-capped at four steps; each balance read proves settlement.
             // slither-disable-next-line calls-loop
             uint256 beforeOutput = _balanceOf(step.tokenOut, address(this));
@@ -374,9 +384,13 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
     }
 
     function configureAdapter(address adapter, bytes32 providerId, bool enabled) external onlyOwner {
-        if (adapter == address(0) || adapter.code.length == 0 || providerId == bytes32(0)) revert InvalidAddress();
+        bytes32 codehash = adapter.codehash;
+        if (adapter == address(0) || adapter.code.length == 0 || codehash == bytes32(0) || providerId == bytes32(0)) {
+            revert InvalidAddress();
+        }
         adapters[adapter] = AdapterConfig({enabled: enabled, providerId: providerId});
-        emit AdapterConfigured(adapter, providerId, enabled);
+        adapterCodehashes[adapter] = codehash;
+        emit AdapterConfigured(adapter, providerId, enabled, codehash);
     }
 
     function configureHookProvider(address adapter, bytes32 providerId) external onlyOwner {
@@ -440,8 +454,8 @@ contract PermRouter is Ownable2Step, Pausable, ReentrancyGuard, EIP712 {
         if (request.quotedAt > block.timestamp) revert QuoteFromFuture();
         // slither-disable-next-line timestamp
         if (block.timestamp - request.quotedAt > MAX_QUOTE_AGE) revert QuoteStale();
-        if (request.amountIn == 0 || request.quoteId == bytes32(0)) revert InvalidAmount();
-        if (request.amountIn > uint256(uint128(type(int128).max))) revert AmountTooLarge();
+        if (request.amountIn == 0 || request.quoteId == bytes32(0) || request.gasEstimate == 0) revert InvalidAmount();
+        if (request.amountIn > uint256(uint128(type(int128).max)) || request.gasEstimate > MAX_QUOTED_GAS) revert AmountTooLarge();
         if (request.tokenIn == request.tokenOut) revert InvalidPair();
         if (request.recipient == address(0) || request.recipient == address(this)) revert InvalidAddress();
         if (request.referrer != address(0) && request.referrer == msg.sender) revert SelfReferral();
