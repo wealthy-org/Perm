@@ -14,14 +14,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.12.0
-      - run: corepack enable
-      - run: corepack pnpm install --frozen-lockfile
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - name: Check official contracts, policy, governance, RPC and indexer
         env:
           RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+          RH_TESTNET_FALLBACK_RPC_URL: ${{ secrets.RH_TESTNET_FALLBACK_RPC_URL }}
           DATABASE_URL: ${{ secrets.PERM_INDEXER_DATABASE_URL }}
           PERM_ALERT_WEBHOOK_URL: ${{ secrets.PERM_ALERT_WEBHOOK_URL }}
-        run: corepack pnpm monitor:testnet
+          PERM_STRICT_OPERATIONS: "1"
+        run: |
+          test -n "$RH_TESTNET_RPC_URL" || { echo "RH_TESTNET_RPC_URL is required"; exit 1; }
+          test -n "$RH_TESTNET_FALLBACK_RPC_URL" || { echo "RH_TESTNET_FALLBACK_RPC_URL is required"; exit 1; }
+          test -n "$DATABASE_URL" || { echo "PERM_INDEXER_DATABASE_URL is required"; exit 1; }
+          test -n "$PERM_ALERT_WEBHOOK_URL" || { echo "PERM_ALERT_WEBHOOK_URL is required"; exit 1; }
+          pnpm monitor:testnet
