@@ -17,8 +17,8 @@ if (configuredIgnores.length !== 0 || /\bauditConfig\s*:/i.test(workspace)) {
   throw new Error("pnpm auditConfig must not suppress dependency advisories");
 }
 
-const args = ["pnpm", "--ignore-workspace", "audit", ...(prod ? ["--prod"] : []), "--json"];
-const run = spawnSync("corepack", args, { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+const args = ["--ignore-workspace", "audit", ...(prod ? ["--prod"] : []), "--json"];
+const run = spawnSync("pnpm", args, { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
 if (run.error) throw run.error;
 let report;
 try { report = JSON.parse(run.stdout); } catch {
