@@ -14,8 +14,3 @@ overrides:
   "tmp@<0.2.7": 0.2.7
   "undici@<6.29.1": 6.29.1
   "ws@>=8.0.0 <8.21.0": 8.21.0
-auditConfig:
-  # No patched picomatch exists as of 2026-11-17; unreachable server-side
-  # filesystem glob path in Perm. Review by 2027-01-15 (see SECURITY.md).
-  ignoreGhsas:
-    - GHSA-fc5q-39xc-vjpf
