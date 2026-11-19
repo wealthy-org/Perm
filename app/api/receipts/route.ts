@@ -33,11 +33,18 @@ function providerLabel(providerId: Hex) {
 }
 
 export async function GET(request: NextRequest) {
-  const limit = consumeRateLimit(`receipt:${requestIdentity(request)}`, 30, 1);
-  if (!limit.allowed) {
-    return NextResponse.json({ error: "Too many receipt requests" }, {
-      status: 429,
-      headers: { "retry-after": String(limit.retryAfter), "cache-control": "no-store" },
+  try {
+    const limit = await consumeRateLimit(`receipt:${requestIdentity(request)}`, 30, 1);
+    if (!limit.allowed) {
+      return NextResponse.json({ error: "Too many receipt requests" }, {
+        status: 429,
+        headers: { "retry-after": String(limit.retryAfter), "cache-control": "no-store" },
+      });
+    }
+  } catch (cause) {
+    return NextResponse.json({ error: safeServerError("receipt-rate-limit", cause, "Request protection is temporarily unavailable") }, {
+      status: 503,
+      headers: { "cache-control": "no-store" },
     });
   }
   const tx = request.nextUrl.searchParams.get("tx") as Hex | null;

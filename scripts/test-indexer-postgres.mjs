@@ -37,10 +37,21 @@ const hookCodehash = `0x${"de".repeat(32)}`;
 const maxNumeric = "9".repeat(78);
 
 try {
-  await sql.unsafe("DROP TABLE IF EXISTS perm_route_steps,perm_settlements,perm_indexer_state CASCADE");
+  await sql.unsafe("DROP FUNCTION IF EXISTS perm_consume_rate_limit(TEXT,DOUBLE PRECISION,DOUBLE PRECISION)");
+  await sql.unsafe("DROP TABLE IF EXISTS perm_rate_limits,perm_route_steps,perm_settlements,perm_indexer_state CASCADE");
   // Exercise the same whole-file simple-query migration path used by the indexer.
   await sql.unsafe(schema);
   await sql.unsafe(schema);
+
+  const rateKey = "a".repeat(64);
+  const [firstLimit] = await sql`SELECT allowed,retry_after FROM perm_consume_rate_limit(${rateKey},2,0.01)`;
+  const [secondLimit] = await sql`SELECT allowed,retry_after FROM perm_consume_rate_limit(${rateKey},2,0.01)`;
+  const [thirdLimit] = await sql`SELECT allowed,retry_after FROM perm_consume_rate_limit(${rateKey},2,0.01)`;
+  assert.equal(firstLimit.allowed, true);
+  assert.equal(secondLimit.allowed, true);
+  assert.equal(thirdLimit.allowed, false);
+  assert(Number(thirdLimit.retry_after) >= 1);
+  await assert.rejects(sql`SELECT * FROM perm_consume_rate_limit('raw-ip',2,1)`, /invalid rate-limit key hash/i);
 
   const columns = await sql`
     SELECT table_name,column_name
@@ -125,7 +136,7 @@ try {
   const [cascaded] = await sql`SELECT COUNT(*)::int AS count FROM perm_route_steps`;
   assert.equal(cascaded.count, 0);
 
-  console.log("PostgreSQL schema: whole-file idempotency, 78-digit numerics, deferred evidence FK, state upsert, and cascade passed");
+  console.log("PostgreSQL schema: whole-file idempotency, shared token bucket, 78-digit numerics, deferred evidence FK, state upsert, and cascade passed");
 } finally {
   await sql.end({ timeout: 2 });
 }

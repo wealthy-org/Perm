@@ -11,16 +11,27 @@ export const runtime = "nodejs";
 const HISTORY_CONFIRMATIONS = BigInt(boundedEnvironmentInteger("HISTORY_CONFIRMATIONS", 12, 1, 10_000));
 
 export async function GET(request: NextRequest) {
-  const limit = consumeRateLimit(`history:${requestIdentity(request)}`, 15, 0.25);
-  if (!limit.allowed) return NextResponse.json({ error: "Too many history requests" }, { status: 429, headers: { "retry-after": String(limit.retryAfter) } });
+  try {
+    const limit = await consumeRateLimit(`history:${requestIdentity(request)}`, 15, 0.25);
+    if (!limit.allowed) return NextResponse.json({ error: "Too many history requests" }, { status: 429, headers: { "retry-after": String(limit.retryAfter) } });
+  } catch (cause) {
+    return NextResponse.json({ error: safeServerError("history-rate-limit", cause, "Request protection is temporarily unavailable") }, { status: 503 });
+  }
   if (!PERM_ROUTER_ADDRESS || !DEPLOYMENT_BLOCK) return NextResponse.json({ error: "Official deployment is not configured" }, { status: 503 });
 
   const accountParam = request.nextUrl.searchParams.get("account");
   if (accountParam && !isAddress(accountParam)) return NextResponse.json({ error: "Invalid account" }, { status: 400 });
   const account = accountParam ? getAddress(accountParam) as Address : undefined;
   const cursorParam = request.nextUrl.searchParams.get("before");
-  if (cursorParam && !/^\d+$/.test(cursorParam)) return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
-  const requestedBefore = cursorParam ? BigInt(cursorParam) : undefined;
+  if (cursorParam && !/^\d+(?::\d+)?$/.test(cursorParam)) return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
+  const [cursorBlock, cursorLogIndex] = cursorParam?.split(":") || [];
+  const requestedBefore = cursorBlock ? {
+    blockNumber: BigInt(cursorBlock),
+    logIndex: cursorLogIndex === undefined ? undefined : Number(cursorLogIndex),
+  } : undefined;
+  if (requestedBefore?.logIndex !== undefined && (!Number.isSafeInteger(requestedBefore.logIndex) || requestedBefore.logIndex < 0)) {
+    return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
+  }
 
   if (indexedHistoryAvailable()) {
     try {
@@ -42,12 +53,19 @@ export async function GET(request: NextRequest) {
     const latest = await client.getBlockNumber();
     const confirmedTip = latest > HISTORY_CONFIRMATIONS ? latest - HISTORY_CONFIRMATIONS : 0n;
     const deploymentBlock = BigInt(DEPLOYMENT_BLOCK);
-    const before = requestedBefore ?? confirmedTip + 1n;
-    if (before === 0n || confirmedTip < deploymentBlock) {
+    if (confirmedTip < deploymentBlock) {
       return NextResponse.json({ items: [], nextBefore: null, source: "official-router-logs", confirmedThrough: confirmedTip.toString() }, { headers: { "cache-control": "private, max-age=10" } });
     }
-    let toBlock = before - 1n < confirmedTip ? before - 1n : confirmedTip;
+    const requestedTo = requestedBefore
+      ? requestedBefore.logIndex === undefined ? requestedBefore.blockNumber - 1n : requestedBefore.blockNumber
+      : confirmedTip;
+    if (requestedTo < deploymentBlock) {
+      return NextResponse.json({ items: [], nextBefore: null, source: "official-router-logs", confirmedThrough: confirmedTip.toString() }, { headers: { "cache-control": "private, max-age=10" } });
+    }
+    let toBlock = requestedTo < confirmedTip ? requestedTo : confirmedTip;
     const initialTo = toBlock;
+    let scannedFloor = toBlock;
+    let reachedDeployment = false;
     const abi = ROUTER_VERSION >= 2 ? permRouterAbi : permRouterV1Abi;
     type SettlementLog = { args: Record<string, unknown>; transactionHash: Hex; logIndex: number; blockNumber: bigint };
     const found: SettlementLog[] = [];
@@ -64,17 +82,26 @@ export async function GET(request: NextRequest) {
         fromBlock,
         toBlock,
         strict: true,
-      });
-      found.unshift(...(logs as unknown as SettlementLog[]));
+      }) as unknown as SettlementLog[];
+      found.push(...logs.filter((log) => {
+        if (!requestedBefore || requestedBefore.logIndex === undefined) return true;
+        return log.blockNumber < requestedBefore.blockNumber
+          || (log.blockNumber === requestedBefore.blockNumber && log.logIndex < requestedBefore.logIndex);
+      }));
       batches += 1;
+      scannedFloor = fromBlock;
       if (fromBlock === deploymentBlock) {
-        toBlock = deploymentBlock - 1n;
+        reachedDeployment = true;
         break;
       }
       toBlock = fromBlock - 1n;
     }
 
-    const items = found.slice(-50).reverse().map((log) => {
+    found.sort((left, right) => left.blockNumber === right.blockNumber
+      ? right.logIndex - left.logIndex
+      : left.blockNumber > right.blockNumber ? -1 : 1);
+    const selectedLogs = found.slice(0, 50);
+    const items = selectedLogs.map((log) => {
       const args = log.args as Record<string, unknown>;
       return {
         transactionHash: log.transactionHash,
@@ -100,15 +127,18 @@ export async function GET(request: NextRequest) {
         legacy: ROUTER_VERSION < 2,
       };
     });
-    const reachedDeployment = toBlock < deploymentBlock;
+    const lastSelected = selectedLogs.at(-1);
+    const nextBefore = selectedLogs.length >= 50 && lastSelected
+      ? `${lastSelected.blockNumber}:${lastSelected.logIndex}`
+      : reachedDeployment ? null : scannedFloor.toString();
     return NextResponse.json({
       items,
       scanned: {
-        fromBlock: (reachedDeployment ? deploymentBlock : toBlock + 1n).toString(),
+        fromBlock: scannedFloor.toString(),
         toBlock: initialTo.toString(),
         batches,
       },
-      nextBefore: reachedDeployment ? null : (toBlock + 1n).toString(),
+      nextBefore,
       confirmedThrough: confirmedTip.toString(),
       source: "official-router-logs",
     }, { headers: { "cache-control": "private, max-age=10" } });

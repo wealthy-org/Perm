@@ -21,11 +21,19 @@ export function indexedHistoryAvailable() {
   return Boolean(connectionString && PERM_ROUTER_ADDRESS);
 }
 
-export async function readIndexedHistory(account: Address | undefined, before: bigint | undefined, limit = 50) {
+export async function readIndexedHistory(
+  account: Address | undefined,
+  before: { blockNumber: bigint; logIndex?: number } | undefined,
+  limit = 50,
+) {
   const sql = database();
   if (!sql || !PERM_ROUTER_ADDRESS) return undefined;
   const accountFilter = account ? sql`AND account=${account.toLowerCase()}` : sql``;
-  const cursorFilter = before !== undefined ? sql`AND block_number < ${before.toString()}` : sql``;
+  const cursorFilter = before === undefined
+    ? sql``
+    : before.logIndex === undefined
+      ? sql`AND block_number < ${before.blockNumber.toString()}`
+      : sql`AND (block_number < ${before.blockNumber.toString()} OR (block_number = ${before.blockNumber.toString()} AND log_index < ${before.logIndex}))`;
   const rows = await sql<Array<Record<string, string | number | boolean | null>>>`
     SELECT transaction_hash,log_index,block_number,block_timestamp,receipt_id,quote_id,account,recipient,
       token_in,token_out,amount_in,routed_input,amount_out,gross_fee,rebate,net_fee,referral_fee,treasury_fee,
@@ -67,7 +75,9 @@ export async function readIndexedHistory(account: Address | undefined, before: b
   return {
     items,
     indexedThrough: stateRows[0]?.value || null,
-    nextBefore: items.length === Math.max(1, Math.min(limit, 100)) ? items.at(-1)?.blockNumber || null : null,
+    nextBefore: items.length === Math.max(1, Math.min(limit, 100))
+      ? items.at(-1) ? `${items.at(-1)?.blockNumber}:${items.at(-1)?.logIndex}` : null
+      : null,
   };
 }
 

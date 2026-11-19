@@ -28,6 +28,16 @@ try {
   await db.exec(schema);
   await db.exec(schema);
 
+  const rateKey = "a".repeat(64);
+  const firstLimit = await db.query("SELECT allowed,retry_after FROM perm_consume_rate_limit($1,2,0.01)", [rateKey]);
+  const secondLimit = await db.query("SELECT allowed,retry_after FROM perm_consume_rate_limit($1,2,0.01)", [rateKey]);
+  const thirdLimit = await db.query("SELECT allowed,retry_after FROM perm_consume_rate_limit($1,2,0.01)", [rateKey]);
+  assert.equal(firstLimit.rows[0].allowed, true);
+  assert.equal(secondLimit.rows[0].allowed, true);
+  assert.equal(thirdLimit.rows[0].allowed, false);
+  assert(Number(thirdLimit.rows[0].retry_after) >= 1);
+  await assert.rejects(db.query("SELECT * FROM perm_consume_rate_limit('raw-ip',2,1)"), /invalid rate-limit key hash/i);
+
   const columns = await db.query(`
     SELECT table_name,column_name
     FROM information_schema.columns
@@ -102,7 +112,7 @@ try {
   const cascaded = await db.query("SELECT COUNT(*)::int AS count FROM perm_route_steps");
   assert.equal(cascaded.rows[0].count, 0);
 
-  console.log("Indexer schema: idempotent migration, 78-digit numerics, deferred evidence FK, state upsert, and cascade passed");
+  console.log("Indexer schema: idempotent migration, shared token bucket, 78-digit numerics, deferred evidence FK, state upsert, and cascade passed");
 } finally {
   await db.close();
 }

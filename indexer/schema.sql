@@ -72,6 +72,80 @@ CREATE INDEX IF NOT EXISTS perm_route_steps_receipt
 CREATE UNIQUE INDEX IF NOT EXISTS perm_route_steps_identity
   ON perm_route_steps (chain_id, router, receipt_id, step_index);
 
+-- Shared API rate-limit state. Keys are SHA-256 digests, never raw IP addresses.
+-- The atomic function gives every serverless instance one token-bucket view.
+CREATE TABLE IF NOT EXISTS perm_rate_limits (
+  key_hash TEXT PRIMARY KEY CHECK (char_length(key_hash) = 64),
+  tokens DOUBLE PRECISION NOT NULL CHECK (tokens >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS perm_rate_limits_updated_at
+  ON perm_rate_limits (updated_at);
+
+CREATE OR REPLACE FUNCTION perm_consume_rate_limit(
+  p_key_hash TEXT,
+  p_capacity DOUBLE PRECISION,
+  p_refill_per_second DOUBLE PRECISION
+) RETURNS TABLE (allowed BOOLEAN, retry_after INTEGER)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  current_tokens DOUBLE PRECISION;
+  current_updated_at TIMESTAMPTZ;
+  replenished DOUBLE PRECISION;
+BEGIN
+  IF p_key_hash !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'invalid rate-limit key hash';
+  END IF;
+  IF p_capacity < 1 OR p_refill_per_second <= 0
+     OR p_capacity <> p_capacity OR p_refill_per_second <> p_refill_per_second THEN
+    RAISE EXCEPTION 'invalid rate-limit parameters';
+  END IF;
+
+  INSERT INTO perm_rate_limits (key_hash, tokens, updated_at)
+  VALUES (p_key_hash, p_capacity, NOW())
+  ON CONFLICT (key_hash) DO NOTHING;
+
+  SELECT tokens, updated_at
+  INTO current_tokens, current_updated_at
+  FROM perm_rate_limits
+  WHERE key_hash = p_key_hash
+  FOR UPDATE;
+
+  replenished := LEAST(
+    p_capacity,
+    current_tokens + GREATEST(0, EXTRACT(EPOCH FROM (NOW() - current_updated_at))) * p_refill_per_second
+  );
+
+  IF replenished >= 1 THEN
+    UPDATE perm_rate_limits
+    SET tokens = replenished - 1, updated_at = NOW()
+    WHERE key_hash = p_key_hash;
+    allowed := TRUE;
+    retry_after := 0;
+  ELSE
+    UPDATE perm_rate_limits
+    SET tokens = replenished, updated_at = NOW()
+    WHERE key_hash = p_key_hash;
+    allowed := FALSE;
+    retry_after := GREATEST(1, CEIL((1 - replenished) / p_refill_per_second)::INTEGER);
+  END IF;
+
+  -- Bound stale state without putting an unbounded cleanup on the request path.
+  IF random() < 0.01 THEN
+    DELETE FROM perm_rate_limits
+    WHERE key_hash IN (
+      SELECT key_hash FROM perm_rate_limits
+      WHERE updated_at < NOW() - INTERVAL '1 day'
+      ORDER BY updated_at
+      LIMIT 1000
+    );
+  END IF;
+  RETURN NEXT;
+END;
+$$;
+
 ALTER TABLE perm_settlements ADD COLUMN IF NOT EXISTS block_hash TEXT;
 ALTER TABLE perm_route_steps ADD COLUMN IF NOT EXISTS block_hash TEXT;
 ALTER TABLE perm_route_steps ADD COLUMN IF NOT EXISTS hook_codehash TEXT;
