@@ -65,6 +65,9 @@ type OnchainReceipt = {
 
 type ReceiptResult = { receipt?: OnchainReceipt; error?: string; key: string; hash: string };
 
+const MAX_INITIAL_HISTORY_PAGES = 4;
+const MAX_RECEIPT_HASHES = 24;
+
 function localReceiptHashes() {
   try {
     const value = JSON.parse(localStorage.getItem("perm:receipts") || "[]");
@@ -84,7 +87,7 @@ export default function ProofExplorer() {
   const [loading, setLoading] = useState(true);
 
   const loadHashes = useCallback(async (hashes: string[]) => {
-    const unique = [...new Set(hashes.filter((hash) => isHash(hash)))].slice(0, 24);
+    const unique = [...new Set(hashes.filter((hash) => isHash(hash)))].slice(0, MAX_RECEIPT_HASHES);
     if (!unique.length) {
       setResults([]);
       setLoading(false);
@@ -123,16 +126,32 @@ export default function ProofExplorer() {
     let cancelled = false;
     const run = async () => {
       const local = localReceiptHashes();
-      let indexed: string[] = [];
-      if (account) {
-        try {
-          const response = await fetch(`/api/history?account=${account}`, { cache: "no-store" });
-          const data = await response.json() as { items?: Array<{ transactionHash: string }> };
-          indexed = data.items?.map((item) => item.transactionHash) || [];
-        } catch {
-          // Local history still remains available.
+      const indexed: string[] = [];
+      let before: string | null | undefined;
+
+      // The RPC fallback deliberately scans a bounded block window. Follow its
+      // cursor so an empty newest window cannot hide older official receipts.
+      // A hosted indexer normally satisfies this in a single request.
+      try {
+        for (let page = 0; page < MAX_INITIAL_HISTORY_PAGES && indexed.length < MAX_RECEIPT_HASHES; page += 1) {
+          const params = new URLSearchParams();
+          if (account) params.set("account", account);
+          if (before) params.set("before", before);
+          const response = await fetch(`/api/history${params.size ? `?${params.toString()}` : ""}`, { cache: "no-store" });
+          const data = await response.json() as {
+            items?: Array<{ transactionHash: string }>;
+            nextBefore?: string | null;
+            error?: string;
+          };
+          if (!response.ok) throw new Error(data.error || "History unavailable");
+          indexed.push(...(data.items?.map((item) => item.transactionHash) || []));
+          before = data.nextBefore;
+          if (!before) break;
         }
+      } catch {
+        // Locally stored receipt hashes remain verifiable when history is unavailable.
       }
+
       if (!cancelled) await loadHashes([...local, ...indexed]);
     };
     void run();
@@ -145,7 +164,7 @@ export default function ProofExplorer() {
     const next = [manualHash, ...existing.filter((hash) => hash.toLowerCase() !== manualHash.toLowerCase())].slice(0, 30);
     try { localStorage.setItem("perm:receipts", JSON.stringify(next)); } catch { /* Verification still works when storage is unavailable. */ }
     setManualHash("");
-    void loadHashes(next);
+    void loadHashes([...next, ...results.map((item) => item.hash)]);
   };
 
   const filtered = useMemo(() => results.filter(({ receipt, hash }) => {

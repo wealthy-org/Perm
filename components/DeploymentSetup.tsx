@@ -107,15 +107,15 @@ export default function DeploymentSetup() {
       const v3ConfigHash = await wallet.writeContract({ account, chain: wallet.chain, address: router, abi: permRouterAbi, functionName: "configureAdapter", args: [v3Adapter, keccak256(toHex("SYNTHRA_V3")), true] });
       setTransactions((current) => [...current, v3ConfigHash]);
       if ((await publicClient.waitForTransactionReceipt({ hash: v3ConfigHash })).status !== "success") throw new Error("V3 adapter configuration reverted");
-      const hookConfigHash = await wallet.writeContract({ account, chain: wallet.chain, address: router, abi: permRouterAbi, functionName: "configureHookProvider", args: [v4Adapter, keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"))] });
-      setTransactions((current) => [...current, hookConfigHash]);
-      if ((await publicClient.waitForTransactionReceipt({ hash: hookConfigHash })).status !== "success") throw new Error("Hook provider identity configuration reverted");
+      // Hook execution remains disabled. A governed configureHookProvider call is
+      // allowed only after docs/HOOK_ONBOARDING.md evidence has passed review.
 
       setStep("verify");
       setMessage("Verify compiled runtime templates, immutable targets, policy, signer and adapter registry.");
       const [
         routerCode, v4Code, v3Code, version, policy, signer, guardian, routerTreasury, routerPermit2,
-        v4Config, v3Config, hookProviderId, v4Router, v4PoolManager, v3Router, v3SwapRouter, v3Weth,
+        v4Config, v3Config, v4PinnedCodehash, v3PinnedCodehash, hookProviderId,
+        v4Router, v4PoolManager, v3Router, v3SwapRouter, v3Weth,
       ] = await Promise.all([
         publicClient.getCode({ address: router }), publicClient.getCode({ address: v4Adapter }), publicClient.getCode({ address: v3Adapter }),
         publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "activePolicyVersion" }),
@@ -126,6 +126,8 @@ export default function DeploymentSetup() {
         publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "permit2" }),
         publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "adapters", args: [v4Adapter] }),
         publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "adapters", args: [v3Adapter] }),
+        publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "adapterCodehashes", args: [v4Adapter] }),
+        publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "adapterCodehashes", args: [v3Adapter] }),
         publicClient.readContract({ address: router, abi: permRouterAbi, functionName: "hookProviderIds", args: [v4Adapter] }),
         publicClient.readContract({ address: v4Adapter, abi: permV4AdapterAbi, functionName: "permRouter" }),
         publicClient.readContract({ address: v4Adapter, abi: permV4AdapterAbi, functionName: "poolManager" }),
@@ -133,10 +135,12 @@ export default function DeploymentSetup() {
         publicClient.readContract({ address: v3Adapter, abi: permV3AdapterAbi, functionName: "swapRouter" }),
         publicClient.readContract({ address: v3Adapter, abi: permV3AdapterAbi, functionName: "weth" }),
       ]);
-      if (!runtimeMatchesArtifact(routerCode, routerArtifact) || !runtimeMatchesArtifact(v4Code, v4Artifact) || !runtimeMatchesArtifact(v3Code, v3Artifact)) {
+      if (!routerCode || !v4Code || !v3Code || !runtimeMatchesArtifact(routerCode, routerArtifact) || !runtimeMatchesArtifact(v4Code, v4Artifact) || !runtimeMatchesArtifact(v3Code, v3Artifact)) {
         throw new Error("Deployed runtime bytecode does not match the compiled artifact template");
       }
-      if (version !== 1 || policy[0] !== 20 || policy[1] !== 2_500 || !policy[2] || !v4Config[0] || !v3Config[0] || hookProviderId !== keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"))) throw new Error("Onchain v2 configuration mismatch");
+      if (version !== 1 || policy[0] !== 20 || policy[1] !== 2_500 || !policy[2] || !v4Config[0] || !v3Config[0]
+        || v4PinnedCodehash !== keccak256(v4Code) || v3PinnedCodehash !== keccak256(v3Code)
+        || hookProviderId !== `0x${"0".repeat(64)}`) throw new Error("Onchain v2 configuration/codehash mismatch or unreviewed hook identity enabled");
       if (signer.toLowerCase() !== quoteSigner.toLowerCase()) throw new Error("Onchain quote signer mismatch");
       if (guardian.toLowerCase() !== account.toLowerCase() || routerTreasury.toLowerCase() !== treasury.toLowerCase() || routerPermit2.toLowerCase() !== PERMIT2_ADDRESS.toLowerCase()) throw new Error("Router immutable/admin configuration mismatch");
       if (v4Router.toLowerCase() !== router.toLowerCase() || v4PoolManager.toLowerCase() !== POOL_MANAGER_ADDRESS.toLowerCase()) throw new Error("V4 adapter immutable configuration mismatch");
@@ -154,7 +158,7 @@ export default function DeploymentSetup() {
         treasury: treasury as Address,
         pauseGuardian: account,
         deploymentBlock: routerReceipt.blockNumber.toString(),
-        deploymentTransactions: [routerHash, v4Hash, v3Hash, v4ConfigHash, v3ConfigHash, hookConfigHash],
+        deploymentTransactions: [routerHash, v4Hash, v3Hash, v4ConfigHash, v3ConfigHash],
         generatedAt: new Date().toISOString(),
         source: "browser-wallet",
       };

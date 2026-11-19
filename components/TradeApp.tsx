@@ -281,6 +281,7 @@ export default function TradeApp() {
         tokenOut: quote.tokenOut,
         amountIn: BigInt(quote.amountIn),
         minAmountOut: BigInt(quote.selected.minAmountOut),
+        gasEstimate: BigInt(quote.selected.gasEstimate),
         recipient: recipientAddress as Address,
         deadline: BigInt(quote.deadline),
         quotedAt: BigInt(quote.quotedAt),
