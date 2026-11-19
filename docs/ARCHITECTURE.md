@@ -11,15 +11,15 @@ The repository contains Router v2 and its full application path. The committed p
 3. It discovers candidates from the persisted PoolManager event registry and Synthra v3 factory:
    - direct Uniswap v4 pools;
    - Synthra v3 pools at reviewed fee tiers;
-   - token-to-token routes through native ETH/WETH;
+   - bounded two-step routes through every distinct supported intermediary (including, but not limited to, ETH/WETH), retaining only the strongest first/second legs; and
    - manifest-reviewed Aggregator Hook pools only.
 4. Every venue quote is obtained from its onchain quoter. Reverting or empty candidates are discarded.
 5. Network gas is converted into output-token units through a separate ETH-to-output market quote. Candidates are ranked by output after estimated gas when that conversion is available.
 6. The server computes price impact from a small-size requote and applies the selected slippage floor.
-7. An executable Router v2 quote is signed with EIP-712 domain `Perm`, version `2`. It binds account, pair, exact input, minimum output, recipient, expiry, quote time, policy version, chain, referrer and route hash.
+7. An executable Router v2 quote is signed with EIP-712 domain `Perm`, version `2`. It binds account, pair, exact input, minimum output, quoted gas estimate, recipient, expiry, quote time, policy version, chain, referrer and route hash.
 8. The client verifies that the displayed input still exactly matches the quote, optionally prepares a one-use Permit2 signature, simulates the complete call, and only then requests wallet submission.
 
-The signing key is server-only. A missing or mismatched key, a non-promoted manifest, a zero recipient/account, or Router v1 makes the quote non-executable.
+A shared release signs through an authenticated remote non-exportable KMS/HSM endpoint; the service independently recovers every returned signature. Raw local-key mode is development-only and cannot satisfy execution health. A missing/mismatched signer, non-promoted manifest, zero recipient/account, or Router v1 makes the quote non-executable.
 
 ## Router v2 settlement
 
@@ -30,9 +30,9 @@ The signing key is server-only. A missing or mismatched key, a non-promoted mani
 - computes integer fee settlement from the signed policy version;
 - records quote consumption, settlement nonce and pull-payment reserves.
 
-For every step it approves only the exact routed amount, calls an allowlisted adapter, clears the allowance, and independently measures the router's output balance. Reported and measured output must match. Final ERC-20 output is checked from the recipient's actual balance delta; native output must be delivered successfully.
+For every step it verifies the allowlisted adapter's current runtime codehash against the value pinned at registration, approves only the exact routed amount, calls the adapter, clears the allowance, and independently measures the router's output balance. Reported and measured output must match. Final ERC-20 output is checked from the recipient's actual balance delta; native output must be delivered successfully.
 
-The final evidence consists of one `RouteStepSettled` event per step and one `SwapSettled` event. Hooked v4 steps use a distinct `UNISWAP_V4_AGGREGATOR_HOOK` provider identity; they cannot be mislabeled as direct v4 execution.
+The final evidence consists of one `RouteStepSettled` event per step and one `SwapSettled` event. Fresh candidates leave the hook-provider identity at zero. Only after governed hook onboarding may hooked v4 steps use the distinct `UNISWAP_V4_AGGREGATOR_HOOK` identity, so they cannot be mislabeled as direct v4 execution.
 
 ## Fee accounting
 
@@ -80,8 +80,11 @@ Deployment produces a **candidate** manifest, never the official manifest. Promo
 
 - onchain post-deploy checks passed;
 - final ownership accepted;
-- all release contracts source-verified;
-- exact router-address confirmation;
+- all release contracts source-verified and runtime-matched to local compiler artifacts;
+- reviewed Aggregator Hook, canonical direct/v3/multi-step/Permit2/referral/WalletConnect/claim evidence, and measured gas calibration;
+- hosted database/indexer, RPC failover, security headers and real alert test;
+- signed independent audit, incident drill, funded bug bounty and distinct engineering/security/governance/operations approvals;
+- exact router-address confirmation; and
 - explicit promotion phrase.
 
 ## Data and proof path

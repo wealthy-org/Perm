@@ -13,24 +13,29 @@ The official manifest, `deployments/robinhood-testnet.json`, still identifies Ro
 | Gate | Result |
 |---|---|
 | Frozen dependency install | Passed: `corepack pnpm install --frozen-lockfile` |
-| Production dependency audit | Passed at high severity; only the documented ignored picomatch advisory remains |
-| Full dependency audit | Passed at high severity; one low-severity `elliptic` development-tool advisory remains, with no patched release |
+| Production dependency audit | Passed with zero reported advisories and no workspace GHSA suppression |
+| Full dependency audit | Exception-qualified: exactly one low-severity `elliptic` development-tool advisory remains, with no patched release; all other findings block |
 | Moderate coverage-tool advisory | Resolved by overriding `bn.js <4.12.3` to `4.12.3` |
 | ESLint | Passed with zero warnings |
 | TypeScript | Passed |
 | Production Next.js build | Passed; 10 static/dynamic routes generated |
-| Router/adapters/timelock suite | **30 passing, 2 fork suites pending** in the regular run |
+| Router/adapters/timelock suite | **31 passing, 2 fork suites pending** in the regular run |
 | Latest-state fork integrations | **2 passing**: real Robinhood v4 in both directions and real Synthra v3/Permit2 in both directions |
-| Solidity coverage | **87.30% statements, 55.65% branches, 90.91% functions, 86.50% lines** |
+| Solidity coverage | **86.80% statements, 55.75% branches, 89.47% functions, 85.98% lines**; Router itself remains 97.56% statements |
 | Coverage cleanup | Passed; the wrapper cleaned instrumented output, rebuilt production artifacts, and re-exported browser ABIs |
 | Browser artifact integrity | Passed after coverage cleanup |
 | Fuzz/invariants | Passed 1,024 deterministic uint127 fee inputs plus randomized conservation/reserve scenarios |
-| Slither 0.11.3 | **70 contracts, 100 detectors, 0 findings** |
+| Slither 0.11.3 | **71 contracts, 100 detectors, 0 findings** |
 | Server-runtime integration | Passed bounded settings, streamed body cap, proxy identity, token bucket, and in-flight cache coalescing |
+| Quote-signer regression | Passed: production local-key signing is blocked; mocked authenticated remote signatures recover; redirect, content-type, size, identity, and signature failures close |
+| Real KMS/HSM signer probe | **Pending operator endpoint/token and candidate addresses**; `release:probe-signer` is ready and its log digest is mandatory custody evidence |
 | PGlite schema integration | Passed idempotency, 78-digit numerics, deferred evidence FK, state upsert, and cascade |
 | PostgreSQL 17 schema integration | Passed the same behaviors through the whole-file migration path used in production |
-| Release-gate regression | Passed: short-delay timelock promotion, unbounded monitor settings, and zero-sized discovery chunks fail closed without changing the official manifest |
+| Release-gate regression | Passed: short-delay timelock promotion, unbounded monitor settings, zero-sized discovery chunks, and role/evidence tampering fail closed without changing the official manifest |
+| Evidence downloader | Passed deterministic redirect/SSRF/size/hash regressions and a live commit-pinned HTTPS download through the DNS-pinned production path |
+| Hosted quote proof | Passed full EIP-712 quote-ID reconstruction and authorized-signer recovery; field, route, gas, timing, and signer mutations fail closed |
 | Operations script syntax | Passed for deployment, ownership, discovery, indexer, monitoring, verification, and promotion scripts |
+| Current official-manifest monitor | **0 failures** on Router v1; warnings correctly report absent local fallback/indexer/alert configuration and intentionally disabled v2 execution |
 
 CI now supplies a PostgreSQL 17 service in addition to PGlite, runs the full-tree high-severity dependency gate, uploads Solidity coverage, and runs Slither independently.
 
@@ -38,7 +43,7 @@ CI now supplies a PostgreSQL 17 service in addition to PGlite, runs the full-tre
 
 The regression suite confirms:
 
-- EIP-712 quote authorization binds account, pair, exact input, minimum output, recipient, timing, policy, chain, referrer, and route hash;
+- EIP-712 quote authorization binds account, pair, exact input, minimum output, gas estimate, recipient, timing, policy, chain, referrer, and route hash;
 - forged, mutated, replayed, stale, future, expired, and wrong-chain quotes fail;
 - self-referral fails even if included in a signed quote;
 - up to four continuous steps can settle with per-step provider, adapter, pool/route, amount, hook, and hook-codehash evidence;

@@ -42,7 +42,7 @@ corepack pnpm indexer:test-schema
 corepack pnpm build
 ```
 
-Current local contract checkpoint: 30 passing tests plus two fork suites skipped in the default run. Current coverage checkpoint: 87.30% statements, 55.65% branches, 90.91% functions and 86.50% lines. The exact count can increase as regressions are added; any failure or material coverage regression blocks release.
+Current local contract checkpoint: 31 passing tests plus two fork suites skipped in the default run. Current coverage checkpoint: 86.80% statements, 55.75% branches, 89.47% functions and 85.98% lines (Router: 97.56% statements). The exact count can increase as regressions are added; any failure or material coverage regression blocks release.
 
 Exercise the migration on a disposable PostgreSQL database (the command is destructive and refuses an unlabelled database):
 
@@ -94,7 +94,7 @@ export TIMELOCK_DELAY_SECONDS=172800
 export VERIFY=1
 ```
 
-`QUOTE_SIGNER_PRIVATE_KEY` may be used instead of `QUOTE_SIGNER_ADDRESS` only to derive its public address during deployment. The production quote service uses `PERM_QUOTE_SIGNER_PRIVATE_KEY`; do not expose it as a `NEXT_PUBLIC_*` value.
+`QUOTE_SIGNER_PRIVATE_KEY` may be used instead of `QUOTE_SIGNER_ADDRESS` only for a local rehearsal. A shared deployment requires the public EOA address only; the production quote service uses authenticated remote signing (`PERM_QUOTE_SIGNER_MODE=remote`) and must never receive the raw key or expose signer credentials as `NEXT_PUBLIC_*` values. Shared `OWNER_ADDRESS`/proposer, `TREASURY_ADDRESS`, and `PAUSE_GUARDIAN_ADDRESS` must be separate contract wallets; deployment rejects EOAs for those operational multisig roles.
 
 ## 3. Deploy a candidate
 
@@ -102,18 +102,17 @@ export VERIFY=1
 corepack pnpm contracts:deploy:testnet
 ```
 
-The script refuses any chain other than `46630`, checks bytecode at PoolManager, V4Quoter, Permit2 and Synthra targets, then deploys:
+The script refuses any chain other than `46630`, refuses a shared deployment from a dirty/uncommitted tree, records the exact Git commit (`RELEASE_COMMIT_SHA` can pin the expected value), checks bytecode at PoolManager, V4Quoter, Permit2 and Synthra targets, then deploys:
 
 1. optional `PermTimelock`;
 2. `PermRouter` v2;
 3. codehash-pinned `PermV4Adapter`;
 4. immutable-target `PermV3Adapter`;
-5. direct-v4 and Synthra-v3 adapter registrations;
-6. a distinct `UNISWAP_V4_AGGREGATOR_HOOK` evidence identity (this does **not** approve a hook);
-7. emergency pause guardian configuration; and
-8. two-step ownership transfers.
+5. direct-v4 and Synthra-v3 adapter registrations with runtime-codehash pins;
+6. emergency pause guardian configuration; and
+7. two-step ownership transfers.
 
-It verifies policy, signer, guardian, Permit2, adapter registry, provider IDs, immutable venue targets and pending ownership from chain.
+The Aggregator Hook provider identity is deliberately left unset. The manifest records exact runtime codehashes for Router, adapters, timelock, PoolManager, V4Quoter, Permit2, factory, Synthra router/quoters and WETH. Post-deploy checks verify policy, signer, guardian, Permit2, adapter registry/codehashes, the zero hook-provider sentinel, immutable venue targets and pending ownership from chain.
 
 The output is `deployments/robinhood-testnet.v2-candidate.json`. It does **not** overwrite the official manifest and has `executionReady: false`.
 
@@ -156,13 +155,21 @@ PERM_MANIFEST_PATH=deployments/robinhood-testnet.v2-candidate.json \
 
 ## 6. Configure services before promotion
 
-Quote service:
+Quote service (shared release):
 
 ```bash
-export PERM_QUOTE_SIGNER_PRIVATE_KEY='0x...matching-candidate-signer...'
+export PERM_QUOTE_SIGNER_MODE=remote
+export QUOTE_SIGNER_ADDRESS='0x...matching-candidate-signer...'
+export PERM_QUOTE_SIGNER_URL='https://authenticated-kms-or-hsm-signer...'
+export PERM_QUOTE_SIGNER_TOKEN='server-only bearer credential'
+unset PERM_QUOTE_SIGNER_PRIVATE_KEY
 export RH_TESTNET_RPC_URL='https://primary...'
 export RH_TESTNET_FALLBACK_RPC_URL='https://fallback...'
 ```
+
+The remote endpoint receives the exact EIP-712 domain/types/message and must return `{ "address": "0x...", "signature": "0x..." }`. The quote service caps the response stream, recovers the signer locally, and rejects malformed, oversized, mismatched, or redirected responses. Raw `PERM_QUOTE_SIGNER_PRIVATE_KEY` mode remains development-only; `/api/health?requireExecution=1` rejects it.
+
+Before hosted E2E, set `RELEASE_SIGNER_PROBE_ACCOUNT`, `RELEASE_SIGNER_PROBE_TOKEN_IN`, and `RELEASE_SIGNER_PROBE_TOKEN_OUT` to real testnet addresses, then run `pnpm --silent release:probe-signer | tee quote-signer-probe.json` and SHA-256 the resulting file. The probe uses a random route hash whose preimage is discarded, never prints the signature, and succeeds only when the real remote signer recovers to the candidate-authorized address. Publish that log at immutable `remoteSignerProbeUrl` and put its digest in the signed custody payload as `remoteSignerProbeSha256`; promotion downloads and hashes it again. Mocked signer tests do not satisfy this requirement.
 
 Indexer:
 
@@ -174,7 +181,7 @@ corepack pnpm indexer:run       # cron/one-shot
 corepack pnpm indexer:watch     # dedicated worker
 ```
 
-The first index run creates tables from `indexer/schema.sql`. Configure `PERM_REQUIRE_INDEXER=1` only after the cursor is current. Configure `PERM_ALERT_WEBHOOK_URL` for critical deployment/indexer alerts.
+The first index run creates indexer tables and the shared PostgreSQL token bucket from `indexer/schema.sql`. Configure `PERM_REQUIRE_INDEXER=1` and `PERM_REQUIRE_SHARED_RATE_LIMIT=1` only after the cursor and shared limiter are healthy. Configure `PERM_ALERT_WEBHOOK_URL` for critical deployment/indexer alerts. An execution-ready release must use all three fail-closed controls; process-local limiting is development-only.
 
 WalletConnect QR sessions require a public WalletConnect project ID:
 
@@ -184,51 +191,95 @@ export NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID='...'
 
 Injected wallets continue to work without it.
 
-## 7. Promote explicitly
+## 7. Produce candidate E2E evidence before promotion
+
+Deploy a controlled staging build against the candidate manifest. It may use the explicit staging override, but the shared public manifest must remain Router v1. From wallets that are neither treasury nor governance, execute and record:
+
+1. native↔token through direct v4;
+2. native↔token through Synthra v3;
+3. token→token with at least two continuous route steps;
+4. an ERC-20 input using a real Permit2 signature transfer;
+5. a referral settlement where account and referrer are different, followed by the referral claim;
+6. a settlement submitted through a real WalletConnect QR session; and
+7. a treasury pull-payment claim.
+
+Put the transaction hashes, receipt IDs and WalletConnect attestation metadata in candidate `releaseEvidence`, then run:
+
+```bash
+pnpm release:verify-e2e
+```
+
+The verifier checks canonical blocks, minimum confirmations, exact official-router events, non-treasury/non-governance accounts, continuous steps, provider identities, fee invariants, Permit2 calldata, separate-account referral accrual/claim, gas-estimate calibration, WalletConnect attestation metadata and the treasury claim. It writes `e2eVerification: "passed"` only after every check succeeds.
+
+## 8. Onboard and prove an Aggregator Hook
+
+No Aggregator Hook deployment is currently established on this testnet. Therefore brief-complete promotion is intentionally blocked until a real reviewed hook exists. Never use an ordinary v4 pool to satisfy this gate.
+
+For each hook candidate:
+
+1. independently review source, permissions, upgradeability, quote semantics and hook-data schema;
+2. record specification and audit-report URLs plus the audit artifact SHA-256;
+3. record the exact PoolKey, initialization block, hook data and expected runtime codehash;
+4. call `setVerifiedHook` and `configureHookProvider(v4Adapter, id("UNISWAP_V4_AGGREGATOR_HOOK"))` through the timelock only after that review;
+5. add the structured entry to candidate `aggregatorHooks`, including a bounded quote probe;
+6. execute a non-treasury Router-v2 staging settlement through the hook; and
+7. add its transaction hash, receipt ID and step index to the entry.
+
+Then run:
+
+```bash
+pnpm release:verify-hooks
+```
+
+The verifier recomputes PoolId and runtime codehash, checks the adapter's pinned codehash, executes the quote probe, verifies canonical confirmations and requires matching `RouteStepSettled` plus `SwapSettled` evidence. It writes `aggregatorHookVerification: "passed"` only on success. Any bytecode change fails closed.
+
+## 9. Verify hosted operations
+
+The staging deployment must set dedicated primary/fallback RPCs, hosted PostgreSQL, `PERM_REQUIRE_INDEXER=1`, `PERM_REQUIRE_SHARED_RATE_LIMIT=1`, quote signer, WalletConnect project ID and the real alert webhook. The indexer must have a current canonical cursor for the candidate router.
+
+Set `PERM_STAGING_URL` and the release environment, then explicitly authorize one test notification:
+
+```bash
+export CONFIRM_ALERT_WEBHOOK_TEST=SEND_TEST_ALERT
+pnpm release:verify-operations
+```
+
+This checks both RPCs and chain IDs, the shared PostgreSQL token bucket, indexer freshness, `/api/health?requireExecution=1`, PostgreSQL-backed history, an official v2 receipt, production security headers and the real alert destination. For the executable v2 quote it independently rebuilds the complete EIP-712 payload (including route hash and bounded gas estimate), checks the quote ID, and recovers the candidate-authorized remote signer; a merely well-formed signature is insufficient. Promotion also requires the operations report to bind the exact candidate router, verified direct-v4 receipt, RPC/indexer cursors, HTTPS staging origin, and complete security-header set. It writes `operationsVerification: "passed"` only on success.
+
+## 10. Verify independent assurance and approvals
+
+Add the signed independent-audit, incident-drill, active bug-bounty/funding, and four-role approval payloads defined in `docs/RELEASE_EVIDENCE.md`. Configure the trusted signer allowlists outside the candidate, then run:
+
+```bash
+pnpm release:prepare-assurance
+pnpm release:verify-assurance
+```
+
+The verifier checks release/commit binding, EOA signatures, distinct approvers, auditor independence, evidence freshness and immutable HTTPS artifact hashes. Every evidence hop is restricted to port 443, resolved to public addresses, pinned for the TLS request, redirect-revalidated, stream-capped at 10 MiB, and hash checked. Promotion downloads and verifies the artifacts again. Run `pnpm release:test-evidence:live` before a release (with the real artifact URL/hash overrides when available) to exercise the production downloader.
+
+Re-run candidate verification after source, ownership and all evidence gates:
+
+```bash
+pnpm deployments:verify-candidate
+```
+
+`promotionReady` is true only when source, ownership, role separation, hook evidence, E2E evidence, hosted operations and signed assurance all pass.
+
+## 11. Promote explicitly
 
 Promotion is the only step that changes the frontend's official router:
 
 ```bash
 export CONFIRM_PROMOTION=ROBINHOOD_TESTNET_V2
 export CONFIRM_ROUTER_ADDRESS='0x...exact candidate router...'
-corepack pnpm deployments:promote
+pnpm deployments:promote
 ```
 
-The command requires Router v2, passed post-deploy checks, verified sources, exact address confirmation, and accepted ownership by the manifest-declared timelock with an onchain delay of at least 172800 seconds. It archives the v1 manifest, writes the v2 official manifest with `executionReady: true`, and records the previous router.
+The command additionally requires treasury and quote-signer role separation, fresh hook/E2E/operations/assurance verification from the last seven days, and revalidates all signed assurance artifacts. It archives the v1 manifest, writes the v2 official manifest with `executionReady: true`, and records the previous router. There is no bypass for an empty Aggregator Hook registry.
 
-Restart all quote/frontend/indexer services. Do not use `NEXT_PUBLIC_PERM_EXECUTION_READY=1` for the public release; that override is for controlled staging only.
+Restart all services, rerun the strict monitor and verify `/api/health?requireExecution=1` remains ready. Do not use `NEXT_PUBLIC_PERM_EXECUTION_READY=1` for the public release; that override is for controlled staging only.
 
-## 8. Post-promotion E2E
-
-From a wallet that is **not** the treasury:
-
-1. execute a small native→v4 test-token trade;
-2. execute the reverse with a real Permit2 signature;
-3. execute native→Synthra token and reverse;
-4. execute a token→token multi-hop route;
-5. confirm exact fee, rebate, referral/treasury split and recipient balance delta;
-6. confirm route-step provider/pool identities in `/proofs`;
-7. confirm `/api/history` returns indexed records after finalization;
-8. confirm quote mutation, replay, self-referral and stale quote fail;
-9. confirm hooks mode returns no candidate until a reviewed hook is actually configured.
-
-A hook E2E is a separate release gate. No Aggregator Hook deployment is currently established on this testnet, so ordinary pools must never satisfy that gate.
-
-## 9. Hook onboarding
-
-For each candidate hook:
-
-1. review source, permissions, upgradeability and hook-data schema;
-2. record the exact pool key and initialization event;
-3. call `setVerifiedHook` on the official v4 adapter;
-4. confirm `verifiedHookCodehashes(hook)` equals current runtime `keccak256(code)`;
-5. add the exact pool fixture to `aggregatorHooks` in the official manifest;
-6. rerun discovery, quote, fork/security and receipt tests;
-7. execute a non-treasury wallet E2E and preserve its transaction proof.
-
-If bytecode changes, execution fails closed until governance verifies the new codehash.
-
-## 10. Incident and rollback
+## 12. Incident and rollback
 
 1. Pause Router v2 immediately through the pause guardian.
 2. Run `monitor:testnet` and preserve its report.

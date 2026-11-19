@@ -98,15 +98,18 @@ Injected wallets tetap tersedia tanpa WalletConnect.
 
 ## Quote signing
 
-Execution v2 memerlukan private key signer di server:
+Mode lokal untuk pengembangan dapat memakai `PERM_QUOTE_SIGNER_PRIVATE_KEY`, tetapi release bersama wajib memakai remote signer KMS/HSM yang non-exportable:
 
 ```bash
-PERM_QUOTE_SIGNER_PRIVATE_KEY='0x...'
+PERM_QUOTE_SIGNER_MODE=remote
+QUOTE_SIGNER_ADDRESS='0x...'
+PERM_QUOTE_SIGNER_URL='https://signer.example/...'
+PERM_QUOTE_SIGNER_TOKEN='server-only credential'
 ```
 
-Alamat key harus sama dengan `PermRouter.quoteSigner()`. Key ini tidak boleh memakai prefix `NEXT_PUBLIC_`, tidak boleh masuk repository, dan sebaiknya hanya memegang identitas signing—bukan dana.
+Alamat signer harus sama dengan `PermRouter.quoteSigner()`. Service membatasi stream respons, menolak redirect/content-type yang salah, memulihkan setiap signature EIP-712, dan menolak identitas/signature yang tidak cocok. Key maupun credential tidak boleh memakai prefix `NEXT_PUBLIC_` atau masuk repository. Health execution menolak mode raw-key. Sebelum release, jalankan `pnpm --silent release:probe-signer` terhadap KMS/HSM nyata dan ikat SHA-256 log tanpa signature itu ke attestation custody.
 
-Selama manifest masih Router v1, API tetap tidak akan menandatangani quote executable walaupun key tersedia.
+Selama manifest masih Router v1, API tetap tidak akan menandatangani quote executable walaupun signer tersedia.
 
 ## Durable indexer
 

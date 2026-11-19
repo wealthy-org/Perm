@@ -54,22 +54,23 @@ The committed shared manifest still points to Router v1. Router v2 execution is 
 - Solidity coverage reporting plus Slither with zero unsuppressed findings;
 - CI full-tree high-severity dependency audit, lint, typecheck, tests and production build;
 - schema behavior on both PGlite and a PostgreSQL 17 service;
-- scheduled deployment/config/indexer monitoring and deployment rehearsal.
+- scheduled deployment/config/indexer monitoring and deployment rehearsal;
+- release-evidence downloads restricted to public port-443 targets with DNS pinning, redirect revalidation, streaming size caps, and immutable SHA-256 checks.
 
-### Dependency-audit exception
+### Dependency-audit posture
 
-`pnpm audit:prod` ignores only `GHSA-fc5q-39xc-vjpf` (picomatch repeated-extglob ReDoS). As of 2026-11-17 there is no patched picomatch release. The package is inherited through WalletConnect's server-side `unstorage` filesystem driver; Perm uses browser IndexedDB/local storage, accepts no user-supplied glob pattern, and the production client/server bundles contain no picomatch implementation. This exception expires for review on **2027-01-15**, or immediately when a patched upstream release appears. Every other high/critical production advisory still fails the command.
+`pnpm audit:prod` accepts no production advisory and the workspace suppresses no GHSA. The previously documented `GHSA-fc5q-39xc-vjpf` picomatch exception became stale when the registry stopped reporting the withdrawn advisory, so it was removed rather than weakening the gate. After `pnpm build`, `pnpm audit:bundle` still provides defense in depth by failing if WalletConnect's standalone `picomatch`/`anymatch` packages appear in a Next output trace or bundle. Next's own vendored `next/dist/compiled/picomatch` may remain in the framework server trace; it is not a standalone audited dependency path, and Perm passes it no user-supplied glob patterns.
 
 Zod is explicitly resolved to patched version 4.6.7. `bn.js` is overridden to patched 4.12.3 for the coverage-tool dependency path. WalletConnect uses `@walletconnect/universal-provider` with a local QR renderer rather than the larger AppKit modal dependency tree.
 
-The remaining low-severity `elliptic` advisory is confined to Hardhat/Ethers-v5 development tooling and has no published patched version. It is reported rather than ignored, and does not enter the production dependency tree.
+The full-tree audit accepts exactly one low-severity `GHSA-848j-6mx2-7j84` finding for `elliptic@6.6.1`, verifies that every finding is development-only and confined to the Hardhat/coverage toolchain, and rejects path or disposition drift. No patched upstream release is reported. This bounded exception expires automatically on **2027-01-15** and does not enter the production dependency tree.
 
 These controls reduce risk; they do not replace independent review.
 
 ## Operational requirements
 
 - use dedicated RPC endpoints and PostgreSQL for public hosting;
-- keep quote-signer and deployer keys server-side and testnet-only;
+- keep deployer keys server-side/testnet-only and use authenticated remote non-exportable KMS/HSM signing for a shared quote service; raw quote keys are development-only, and release custody evidence must bind the SHA-256 of a real signer probe;
 - use multisig/timelock governance (promotion enforces at least 48 hours) and a separate emergency pause guardian;
 - verify all source on Blockscout before promotion;
 - keep Aggregator Hooks disabled until exact source, permissions, pool key, hook data and codehash are reviewed;
