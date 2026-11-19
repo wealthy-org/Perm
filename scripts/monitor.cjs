@@ -3,13 +3,14 @@
  * PERM_ALERT_WEBHOOK_URL when official manifest state is unavailable or changed. */
 const fs = require("node:fs");
 const path = require("node:path");
-const { createPublicClient, defineChain, getAddress, http, parseAbi } = require("viem");
+const { createPublicClient, defineChain, getAddress, http, id, keccak256, parseAbi } = require("viem");
 
 const root = path.resolve(__dirname, "..");
 const manifestPath = process.env.PERM_MANIFEST_PATH
   ? path.resolve(process.cwd(), process.env.PERM_MANIFEST_PATH)
   : path.join(root, "deployments/robinhood-testnet.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const strictOperations = process.env.PERM_STRICT_OPERATIONS === "1" || manifest.executionReady === true;
 
 function boundedInteger(name, fallback, minimum, maximum) {
   const raw = process.env[name] ?? String(fallback);
@@ -34,6 +35,7 @@ const routerAbi = parseAbi([
   "function activePolicyVersion() view returns (uint32)",
   "function feePolicies(uint32) view returns (uint16 platformFeeBps,uint16 rebateShareBps,bool enabled,bool exists)",
   "function adapters(address) view returns (bool enabled,bytes32 providerId)",
+  "function adapterCodehashes(address) view returns (bytes32 codehash)",
   "function hookProviderIds(address) view returns (bytes32 providerId)",
   "function quoteSigner() view returns (address)",
   "function pauseGuardian() view returns (address)",
@@ -44,6 +46,7 @@ const v4Abi = parseAbi([
   "function pendingOwner() view returns (address)",
   "function permRouter() view returns (address)",
   "function poolManager() view returns (address)",
+  "function verifiedHookCodehashes(address) view returns (bytes32)",
 ]);
 const v3Abi = parseAbi([
   "function owner() view returns (address)",
@@ -67,8 +70,11 @@ async function requireCode(label, address) {
   if (!address) return;
   const code = await client.getCode({ address: getAddress(address) });
   const present = Boolean(code && code !== "0x");
-  checks[`${label}Code`] = present;
+  const actualCodehash = present ? keccak256(code) : null;
+  const expectedCodehash = manifest.runtimeCodehashes?.[label] || manifest.dependencyCodehashes?.[label] || null;
+  checks[`${label}Code`] = { present, actualCodehash, expectedCodehash };
   failUnless(present, `${label} has no runtime bytecode at ${address}`);
+  if (expectedCodehash) failUnless(same(actualCodehash, expectedCodehash), `${label} runtime codehash changed: expected ${expectedCodehash}, got ${actualCodehash}`);
 }
 
 async function sendAlert(report) {
@@ -96,6 +102,20 @@ async function main() {
   checks.blockLagSeconds = lagSeconds;
   failUnless(lagSeconds <= maxLagSeconds, `Latest block is ${lagSeconds}s old (limit ${maxLagSeconds}s)`);
 
+  const fallbackRpcUrl = process.env.RH_TESTNET_FALLBACK_RPC_URL;
+  if (fallbackRpcUrl) {
+    const fallbackClient = createPublicClient({ chain, transport: http(fallbackRpcUrl, { timeout: 20_000, retryCount: 1 }) });
+    const [fallbackChainId, fallbackBlock] = await Promise.all([fallbackClient.getChainId(), fallbackClient.getBlock()]);
+    const fallbackLagSeconds = Math.max(0, Math.floor(Date.now() / 1000) - Number(fallbackBlock.timestamp));
+    checks.fallbackRpc = { chainId: fallbackChainId, latestBlock: fallbackBlock.number.toString(), blockLagSeconds: fallbackLagSeconds };
+    failUnless(fallbackChainId === manifest.chainId, `Fallback RPC chain ${fallbackChainId} does not match manifest ${manifest.chainId}`);
+    failUnless(fallbackLagSeconds <= maxLagSeconds, `Fallback RPC latest block is ${fallbackLagSeconds}s old (limit ${maxLagSeconds}s)`);
+  } else if (strictOperations) {
+    failures.push("Fallback RPC is required for an execution-ready release");
+  } else {
+    warnings.push("Fallback RPC is not configured");
+  }
+
   const databaseUrl = process.env.DATABASE_URL || process.env.PERM_INDEXER_DATABASE_URL;
   if (databaseUrl) {
     const postgres = require("postgres");
@@ -122,15 +142,24 @@ async function main() {
     } finally {
       await db.end({ timeout: 2 });
     }
+  } else if (strictOperations) {
+    failures.push("Durable indexer monitoring is required for an execution-ready release");
   } else {
     warnings.push("Durable indexer monitoring is disabled because DATABASE_URL is not configured");
+  }
+
+  if (!process.env.PERM_ALERT_WEBHOOK_URL) {
+    if (strictOperations) failures.push("Alert webhook is required for an execution-ready release");
+    else warnings.push("Alert webhook is not configured");
   }
 
   const addresses = {
     permRouter: manifest.permRouter, v4Adapter: manifest.v4Adapter, v3Adapter: manifest.v3Adapter,
     poolManager: manifest.poolManager, v4Quoter: manifest.v4Quoter, permit2: manifest.permit2,
+    synthraFactory: manifest.venues?.synthraV3?.factory,
     synthraSwapRouter: manifest.venues?.synthraV3?.swapRouter02,
     synthraQuoter: manifest.venues?.synthraV3?.quoterV2,
+    synthraQuoterShim: manifest.venues?.synthraV3?.quoterShim,
     synthraWeth: manifest.venues?.synthraV3?.weth,
     timelock: manifest.timelock,
   };
@@ -194,18 +223,72 @@ async function main() {
   }
 
   if (manifest.routerVersion >= 2) {
-    const [quoteSigner, pauseGuardian, permit2, hookProviderId] = await Promise.all([
+    const [
+      quoteSigner, pauseGuardian, permit2, hookProviderId, v4PinnedCodehash, v3PinnedCodehash,
+      v4Code, v3Code, quoteSignerCode, treasuryCode, guardianCode,
+    ] = await Promise.all([
       read(manifest.permRouter, routerAbi, "quoteSigner"), read(manifest.permRouter, routerAbi, "pauseGuardian"),
       read(manifest.permRouter, routerAbi, "permit2"), read(manifest.permRouter, routerAbi, "hookProviderIds", [manifest.v4Adapter]),
+      read(manifest.permRouter, routerAbi, "adapterCodehashes", [manifest.v4Adapter]),
+      read(manifest.permRouter, routerAbi, "adapterCodehashes", [manifest.v3Adapter]),
+      client.getCode({ address: getAddress(manifest.v4Adapter) }), client.getCode({ address: getAddress(manifest.v3Adapter) }),
+      client.getCode({ address: getAddress(manifest.quoteSigner) }),
+      client.getCode({ address: getAddress(manifest.treasury) }), client.getCode({ address: getAddress(manifest.pauseGuardian) }),
     ]);
+    const v4ActualCodehash = v4Code && v4Code !== "0x" ? keccak256(v4Code) : null;
+    const v3ActualCodehash = v3Code && v3Code !== "0x" ? keccak256(v3Code) : null;
     checks.quoteSigner = quoteSigner;
     checks.pauseGuardian = pauseGuardian;
     checks.permit2 = permit2;
+    checks.operationalCustody = {
+      quoteSignerType: quoteSignerCode && quoteSignerCode !== "0x" ? "contract" : "eoa",
+      treasuryType: treasuryCode && treasuryCode !== "0x" ? "contract" : "eoa",
+      pauseGuardianType: guardianCode && guardianCode !== "0x" ? "contract" : "eoa",
+    };
     checks.hookProviderId = hookProviderId;
+    checks.adapterCodehashes = { v4Pinned: v4PinnedCodehash, v4Actual: v4ActualCodehash, v3Pinned: v3PinnedCodehash, v3Actual: v3ActualCodehash };
     failUnless(same(quoteSigner, manifest.quoteSigner), `Quote signer changed: expected ${manifest.quoteSigner}, got ${quoteSigner}`);
     failUnless(same(pauseGuardian, manifest.pauseGuardian), `Pause guardian changed: expected ${manifest.pauseGuardian}, got ${pauseGuardian}`);
     failUnless(same(permit2, manifest.permit2), `Permit2 mismatch: expected ${manifest.permit2}, got ${permit2}`);
-    failUnless(manifest.providers?.uniswapV4AggregatorHook && same(hookProviderId, manifest.providers.uniswapV4AggregatorHook), `Hook provider identity mismatch: got ${hookProviderId}`);
+    if (manifest.releaseStatus !== "rehearsal") {
+      failUnless(!quoteSignerCode || quoteSignerCode === "0x", "Quote signer must remain an EOA backed by isolated signing custody");
+      failUnless(Boolean(treasuryCode && treasuryCode !== "0x"), "Treasury must be a contract wallet");
+      failUnless(Boolean(guardianCode && guardianCode !== "0x"), "Pause guardian must be a contract wallet");
+      const distinctRoles = new Set([manifest.owner, manifest.treasury, manifest.quoteSigner, manifest.pauseGuardian].map((value) => String(value).toLowerCase()));
+      failUnless(distinctRoles.size === 4, "Owner, treasury, quote signer and pause guardian must be separate identities");
+    }
+    failUnless(Boolean(v4ActualCodehash) && same(v4PinnedCodehash, v4ActualCodehash), `V4 adapter runtime no longer matches its pinned Router codehash`);
+    failUnless(Boolean(v3ActualCodehash) && same(v3PinnedCodehash, v3ActualCodehash), `V3 adapter runtime no longer matches its pinned Router codehash`);
+
+    const hookEntries = Array.isArray(manifest.aggregatorHooks) ? manifest.aggregatorHooks : [];
+    const expectedHookProviderId = hookEntries.length
+      ? (manifest.reservedProviderIds?.uniswapV4AggregatorHook || id("UNISWAP_V4_AGGREGATOR_HOOK"))
+      : `0x${"0".repeat(64)}`;
+    failUnless(same(hookProviderId, expectedHookProviderId), hookEntries.length
+      ? `Reviewed hook staging requires the distinct provider identity; got ${hookProviderId}`
+      : `Hook provider identity must remain disabled while no hook is reviewed; got ${hookProviderId}`);
+    checks.aggregatorHooks = [];
+    for (const entry of hookEntries) {
+      const hook = entry.hooks;
+      if (!hook || !entry.expectedCodehash) {
+        failures.push("Aggregator Hook manifest entries require hooks and expectedCodehash");
+        continue;
+      }
+      const [configuredCodehash, code] = await Promise.all([
+        read(manifest.v4Adapter, v4Abi, "verifiedHookCodehashes", [hook]),
+        client.getCode({ address: getAddress(hook) }),
+      ]);
+      const actualCodehash = code && code !== "0x" ? keccak256(code) : null;
+      checks.aggregatorHooks.push({ hook, expectedCodehash: entry.expectedCodehash, configuredCodehash, actualCodehash });
+      failUnless(Boolean(actualCodehash), `Aggregator Hook has no runtime bytecode: ${hook}`);
+      failUnless(same(configuredCodehash, entry.expectedCodehash), `Aggregator Hook adapter codehash mismatch for ${hook}`);
+      failUnless(Boolean(actualCodehash) && same(actualCodehash, entry.expectedCodehash), `Aggregator Hook runtime codehash mismatch for ${hook}`);
+    }
+    if (manifest.executionReady === true) {
+      failUnless(hookEntries.length > 0, "Execution-ready brief compliance requires at least one reviewed Aggregator Hook");
+      failUnless(manifest.aggregatorHookVerification === "passed", "Aggregator Hook evidence has not passed verification");
+      failUnless(manifest.e2eVerification === "passed", "Required Router v2 E2E evidence has not passed verification");
+    }
   } else {
     warnings.push("Official manifest is still Router v1; v2 execution remains intentionally disabled");
   }
