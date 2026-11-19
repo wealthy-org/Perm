@@ -63,8 +63,8 @@ const invalidIdentity = { headers: new Headers({ "x-forwarded-for": "x".repeat(6
 assert.equal(requestIdentity(invalidIdentity), "anonymous");
 
 const rateKey = `runtime-test:${crypto.randomUUID()}`;
-assert.equal(consumeRateLimit(rateKey, 1, 0.01).allowed, true);
-const limited = consumeRateLimit(rateKey, 1, 0.01);
+assert.equal((await consumeRateLimit(rateKey, 1, 0.01)).allowed, true);
+const limited = await consumeRateLimit(rateKey, 1, 0.01);
 assert.equal(limited.allowed, false);
 assert(limited.retryAfter >= 1);
 

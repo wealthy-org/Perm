@@ -1,7 +1,14 @@
+import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import postgres, { type Sql } from "postgres";
 import type { NextRequest } from "next/server";
 
 type Bucket = { tokens: number; updatedAt: number };
+type GlobalRuntime = typeof globalThis & { __permRateLimitSql?: Sql };
+const rateLimitConnectionString = process.env.PERM_RATE_LIMIT_DATABASE_URL
+  || process.env.DATABASE_URL
+  || process.env.PERM_INDEXER_DATABASE_URL;
+const requireSharedRateLimit = process.env.PERM_REQUIRE_SHARED_RATE_LIMIT === "1";
 const buckets = new Map<string, Bucket>();
 const cache = new Map<string, { expiresAt: number; value: unknown }>();
 const pendingCache = new Map<string, Promise<unknown>>();
@@ -10,6 +17,19 @@ const MAX_CACHE_ENTRIES = 2_000;
 const MAX_PENDING_LOADS = 1_000;
 
 export class RequestBodyTooLargeError extends Error {}
+export class SharedRateLimitUnavailableError extends Error {}
+
+function rateLimitDatabase() {
+  if (!rateLimitConnectionString) return undefined;
+  const global = globalThis as GlobalRuntime;
+  global.__permRateLimitSql ??= postgres(rateLimitConnectionString, {
+    max: 3,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    ssl: process.env.PGSSLMODE === "disable" ? false : "require",
+  });
+  return global.__permRateLimitSql;
+}
 
 export function boundedEnvironmentInteger(name: string, fallback: number, minimum: number, maximum: number) {
   if (!name || !Number.isSafeInteger(fallback) || !Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)
@@ -85,11 +105,7 @@ function pruneBuckets(now: number) {
   }
 }
 
-/** In-process token bucket. Production should back this with a shared Redis-compatible store. */
-export function consumeRateLimit(key: string, capacity: number, refillPerSecond: number) {
-  if (!Number.isFinite(capacity) || capacity < 1 || !Number.isFinite(refillPerSecond) || refillPerSecond <= 0) {
-    throw new Error("Invalid rate-limit configuration");
-  }
+function consumeLocalRateLimit(key: string, capacity: number, refillPerSecond: number) {
   const now = Date.now();
   const previous = buckets.get(key) || { tokens: capacity, updatedAt: now };
   const elapsed = Math.max(0, now - previous.updatedAt) / 1_000;
@@ -103,6 +119,39 @@ export function consumeRateLimit(key: string, capacity: number, refillPerSecond:
   }
   buckets.set(key, { tokens: tokens - 1, updatedAt: now });
   return { allowed: true, retryAfter: 0 };
+}
+
+/**
+ * Uses the PostgreSQL token bucket when configured so all serverless instances
+ * share one limit. Local memory is intentionally a development fallback only;
+ * PERM_REQUIRE_SHARED_RATE_LIMIT=1 makes production fail closed.
+ */
+export async function consumeRateLimit(key: string, capacity: number, refillPerSecond: number) {
+  if (!key || key.length > 1_024 || !Number.isFinite(capacity) || capacity < 1
+      || !Number.isFinite(refillPerSecond) || refillPerSecond <= 0) {
+    throw new Error("Invalid rate-limit configuration");
+  }
+
+  const sql = rateLimitDatabase();
+  if (sql) {
+    const keyHash = createHash("sha256").update(key).digest("hex");
+    try {
+      const rows = await sql<Array<{ allowed: boolean; retry_after: number | string }>>`
+        SELECT allowed,retry_after
+        FROM perm_consume_rate_limit(${keyHash},${capacity},${refillPerSecond})
+      `;
+      const row = rows[0];
+      if (!row || typeof row.allowed !== "boolean") throw new Error("Shared rate limiter returned no result");
+      return { allowed: row.allowed, retryAfter: Math.max(0, Number(row.retry_after)) };
+    } catch (cause) {
+      console.error("[shared-rate-limit]", cause);
+      if (requireSharedRateLimit) throw new SharedRateLimitUnavailableError("Shared request protection is unavailable");
+    }
+  } else if (requireSharedRateLimit) {
+    throw new SharedRateLimitUnavailableError("Shared request protection is not configured");
+  }
+
+  return consumeLocalRateLimit(key, capacity, refillPerSecond);
 }
 
 function pruneCache(now: number) {

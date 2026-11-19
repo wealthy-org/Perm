@@ -10,7 +10,6 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import deployment from "@/deployments/robinhood-testnet.json";
 import {
   DEPLOYMENT_READY,
@@ -26,34 +25,20 @@ import {
 } from "@/lib/web3/config";
 import { erc20Abi, permRouterAbi, permV4AdapterAbi, v3FactoryAbi, v3QuoterAbi, v4QuoterAbi } from "@/lib/web3/abis";
 import { tokenPairPools, type V4PoolFixture } from "@/lib/server/pools";
-import { LIVE_TOKEN_MAP, type LiveToken, type LiveTokenSymbol } from "@/lib/web3/tokens";
+import { discoverTwoStepRoutes } from "@/lib/server/route-planner";
+import { LIVE_TOKEN_MAP, LIVE_TOKENS, type LiveToken, type LiveTokenSymbol } from "@/lib/web3/tokens";
 import type { LiveQuote, LiveQuoteCandidate, QuoteRouteStep } from "@/lib/web3/quote";
 import { RequestBodyTooLargeError, consumeRateLimit, readJsonBody, requestIdentity, safeServerError, ttlCached } from "@/lib/server/runtime";
+import { PERM_QUOTE_TYPES, quoteSignerConfiguration, quoteSignerExecutionReady, signPermQuote } from "@/lib/server/quote-signer";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const BPS = 10_000n;
 const MAX_INT128 = (1n << 127n) - 1n;
+const MAX_QUOTED_GAS = 30_000_000n;
 const V3_FEES = [100, 500, 3_000, 10_000] as const;
 const ROUTE_STEP_PARAMETERS = parseAbiParameters("(address adapter,address tokenIn,address tokenOut,bytes data)[]");
-const QUOTE_TYPES = {
-  PermQuote: [
-    { name: "account", type: "address" },
-    { name: "tokenIn", type: "address" },
-    { name: "tokenOut", type: "address" },
-    { name: "amountIn", type: "uint256" },
-    { name: "minAmountOut", type: "uint256" },
-    { name: "recipient", type: "address" },
-    { name: "deadline", type: "uint256" },
-    { name: "quotedAt", type: "uint64" },
-    { name: "policyVersion", type: "uint32" },
-    { name: "chainId", type: "uint256" },
-    { name: "referrer", type: "address" },
-    { name: "routeHash", type: "bytes32" },
-  ],
-} as const;
-
 type RoutingMode = "best" | "v4" | "v3" | "hooks";
 type QuoteBody = {
   tokenIn?: string;
@@ -90,12 +75,6 @@ function error(message: string, status = 400, extraHeaders?: Record<string, stri
   });
 }
 
-function quoteSignerAccount() {
-  const key = process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY;
-  if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) return undefined;
-  return privateKeyToAccount(key as Hex);
-}
-
 function routeDataFor(steps: InternalStep[]): Hex {
   return encodeAbiParameters(ROUTE_STEP_PARAMETERS, [steps.map((step) => ({
     adapter: step.adapter,
@@ -106,17 +85,26 @@ function routeDataFor(steps: InternalStep[]): Hex {
 }
 
 function configuredHookPools(): V4PoolFixture[] {
-  const entries = (deployment.aggregatorHooks || []) as unknown as Array<Partial<V4PoolFixture>>;
+  const override = process.env.PERM_AGGREGATOR_HOOKS_JSON;
+  if (override && override.length > 65_536) throw new Error("PERM_AGGREGATOR_HOOKS_JSON is too large");
+  const parsed = override ? JSON.parse(override) : deployment.aggregatorHooks || [];
+  if (!Array.isArray(parsed) || parsed.length > 32) throw new Error("Aggregator Hook configuration is invalid");
+  const entries = parsed as Array<Partial<V4PoolFixture>>;
   return entries.filter((entry): entry is V4PoolFixture => Boolean(
     entry.id && entry.currency0 && entry.currency1 && entry.hooks && entry.hookData !== undefined
-      && entry.fee !== undefined && entry.tickSpacing !== undefined && entry.initializationBlock !== undefined,
+      && entry.fee !== undefined && entry.tickSpacing !== undefined && entry.initializationBlock !== undefined
+      && entry.sourceType === "aggregator-hook",
   ));
 }
 
 export async function POST(request: NextRequest) {
   const identity = requestIdentity(request);
-  const limit = consumeRateLimit(`quote:${identity}`, 12, 0.5);
-  if (!limit.allowed) return error("Too many quote requests. Retry shortly.", 429, { "retry-after": String(limit.retryAfter) });
+  try {
+    const limit = await consumeRateLimit(`quote:${identity}`, 12, 0.5);
+    if (!limit.allowed) return error("Too many quote requests. Retry shortly.", 429, { "retry-after": String(limit.retryAfter) });
+  } catch (cause) {
+    return error(safeServerError("quote-rate-limit", cause, "Request protection is temporarily unavailable"), 503);
+  }
 
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
     return error("Content-Type must be application/json", 415);
@@ -430,19 +418,23 @@ export async function POST(request: NextRequest) {
     const directSteps = await edges(tokenIn, tokenOut, routedInput);
     const candidatePromises: Array<Promise<InternalCandidate>> = directSteps.map((step) => buildCandidate([step]));
 
-    if (tokenIn.address !== ZERO_ADDRESS && tokenOut.address !== ZERO_ADDRESS) {
-      const firstLegs = (await edges(tokenIn, LIVE_TOKEN_MAP.ETH, routedInput))
-        .sort((a, b) => BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : BigInt(b.amountOut) < BigInt(a.amountOut) ? -1 : 0)
-        .slice(0, 8);
-      const secondLegGroups = await runLimited(firstLegs.map((first) => async () => {
-        const secondLegs = await edges(LIVE_TOKEN_MAP.ETH, tokenOut, BigInt(first.amountOut));
-        return secondLegs.map((second) => buildCandidate([first, second]));
-      }), 2);
-      candidatePromises.push(...secondLegGroups.flat());
-    }
+    const twoStepCandidates = await discoverTwoStepRoutes({
+      tokens: LIVE_TOKENS,
+      input: tokenIn,
+      output: tokenOut,
+      amountIn: routedInput,
+      edges,
+      buildCandidate,
+      maxIntermediates: 16,
+      maxFirstLegs: 2,
+      maxSecondLegs: 3,
+      concurrency: 3,
+    });
 
-    const internalCandidates = await Promise.all(candidatePromises);
-    const deduped = [...new Map(internalCandidates.map((candidate) => [candidate.routeId, candidate])).values()]
+    const internalCandidates = [...await Promise.all(candidatePromises), ...twoStepCandidates];
+    const deduped = [...new Map(internalCandidates
+      .filter((candidate) => BigInt(candidate.gasEstimate) > 0n && BigInt(candidate.gasEstimate) <= MAX_QUOTED_GAS)
+      .map((candidate) => [candidate.routeId, candidate])).values()]
       .sort((a, b) => {
         if (a.gasNormalized !== b.gasNormalized) return a.gasNormalized ? -1 : 1;
         const left = BigInt(a.gasAdjustedOutput ?? a.amountOut);
@@ -472,7 +464,7 @@ export async function POST(request: NextRequest) {
 
     const quotedAt = Number(block.timestamp);
     const deadline = quotedAt + 90;
-    const signer = quoteSignerAccount();
+    const signer = quoteSignerConfiguration();
     const domain = { name: "Perm", version: "2", chainId: RH_TESTNET_CHAIN_ID, verifyingContract: PERM_ROUTER_ADDRESS || ZERO_ADDRESS } as const;
     const message = {
       account,
@@ -480,6 +472,7 @@ export async function POST(request: NextRequest) {
       tokenOut: tokenOut.address,
       amountIn,
       minAmountOut: BigInt(selectedInternal.minAmountOut),
+      gasEstimate: BigInt(selectedInternal.gasEstimate),
       recipient,
       deadline: BigInt(deadline),
       quotedAt: BigInt(quotedAt),
@@ -488,17 +481,19 @@ export async function POST(request: NextRequest) {
       referrer,
       routeHash: keccak256(selectedInternal.routeData),
     };
-    const quoteId = hashTypedData({ domain, types: QUOTE_TYPES, primaryType: "PermQuote", message });
+    const quoteId = hashTypedData({ domain, types: PERM_QUOTE_TYPES, primaryType: "PermQuote", message });
 
-    let executable = Boolean(DEPLOYMENT_READY && account !== ZERO_ADDRESS && recipient !== ZERO_ADDRESS && signer);
+    const signerRuntimeAllowed = quoteSignerExecutionReady(signer);
+    let executable = Boolean(DEPLOYMENT_READY && account !== ZERO_ADDRESS && recipient !== ZERO_ADDRESS && signerRuntimeAllowed);
     let deploymentReason: string | undefined;
     if (ROUTER_VERSION < 2) deploymentReason = "Router v2 is required for signed multi-venue execution; the shared manifest still points to v1.";
     else if (!DEPLOYMENT_READY) deploymentReason = "The Router v2 candidate has not passed and been promoted through the release gate.";
-    else if (!signer) deploymentReason = "PERM_QUOTE_SIGNER_PRIVATE_KEY is not configured on the quote service.";
+    else if (!signer.configured) deploymentReason = signer.reason || "The quote signer is not configured.";
+    else if (!signerRuntimeAllowed) deploymentReason = "Production execution requires authenticated remote signer custody.";
     else if (account === ZERO_ADDRESS || recipient === ZERO_ADDRESS) deploymentReason = "Connect a wallet and provide a recipient to request an executable signed quote.";
 
     const configuredRouter = PERM_ROUTER_ADDRESS;
-    if (executable && configuredRouter && signer) {
+    if (executable && configuredRouter && signer.address) {
       const onchainSigner = await ttlCached(`signer:${configuredRouter}`, 10_000, () => client.readContract({
         address: configuredRouter,
         abi: permRouterAbi,
@@ -510,8 +505,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const quoteSignature = executable && signer
-      ? await signer.signTypedData({ domain, types: QUOTE_TYPES, primaryType: "PermQuote", message })
+    const quoteSignature = executable
+      ? (await signPermQuote(domain, message)).signature
       : "0x";
     const requestFingerprint = keccak256(toHex(JSON.stringify({
       tokenIn: tokenIn.symbol,

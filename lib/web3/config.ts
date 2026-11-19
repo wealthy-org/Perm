@@ -31,7 +31,10 @@ export const PERM_ROUTER_ADDRESS = (envRouter || deployment.permRouter || undefi
 export const PERM_V4_ADAPTER_ADDRESS = (envV4Adapter || deployment.v4Adapter || undefined) as Address | undefined;
 export const PERM_V3_ADAPTER_ADDRESS = (envV3Adapter || deployment.v3Adapter || undefined) as Address | undefined;
 export const ROUTER_VERSION = Number(process.env.NEXT_PUBLIC_PERM_ROUTER_VERSION || deployment.routerVersion || 1);
-export const DEPLOYMENT_BLOCK = deployment.deploymentBlock as number | null;
+const deploymentBlockOverride = process.env.NEXT_PUBLIC_PERM_DEPLOYMENT_BLOCK;
+if (deploymentBlockOverride && !/^\d+$/.test(deploymentBlockOverride)) throw new Error("NEXT_PUBLIC_PERM_DEPLOYMENT_BLOCK must be an integer");
+export const DEPLOYMENT_BLOCK = deploymentBlockOverride ? Number(deploymentBlockOverride) : deployment.deploymentBlock as number | null;
+if (DEPLOYMENT_BLOCK !== null && (!Number.isSafeInteger(DEPLOYMENT_BLOCK) || DEPLOYMENT_BLOCK < 0)) throw new Error("Deployment block is invalid");
 const manifestExecutionReady = (deployment as { executionReady?: boolean }).executionReady === true;
 const explicitStagingReady = process.env.NEXT_PUBLIC_PERM_EXECUTION_READY === "1";
 export const DEPLOYMENT_READY = Boolean(PERM_ROUTER_ADDRESS && PERM_V4_ADAPTER_ADDRESS && ROUTER_VERSION >= 2 && (manifestExecutionReady || explicitStagingReady));
