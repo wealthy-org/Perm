@@ -61,6 +61,8 @@ export type LiveQuote = {
   blockNumber: string;
   requestFingerprint: Hex;
   executable: boolean;
+  executionMode: "release" | "allowlisted-staging" | "read-only";
+  nonRelease: boolean;
   deploymentReason?: string;
   selected: LiveQuoteCandidate;
   candidates: LiveQuoteCandidate[];

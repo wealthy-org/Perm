@@ -384,7 +384,7 @@ export default function TradeApp() {
     if (connecting) return "Connecting wallet…";
     if (!account) return "Connect wallet";
     if (!isCorrectChain) return "Switch to RH Testnet";
-    if (!deployment.ready) return "Deploy Router v2";
+    if (!deployment.ready) return deployment.stagingConfigured ? "Staging E2E pending" : "Deploy Router v2";
     if (!recipientValid) return "Enter a valid recipient";
     if (!balancesReady) return "Loading balances…";
     if (!balanceEnough) return "Insufficient balance / gas";
@@ -423,15 +423,25 @@ export default function TradeApp() {
         <div className="trade-grid">
           <section className="swap-panel glass-panel" aria-label="Executable testnet swap">
             <header className="panel-header"><div><span className="section-kicker">EXACT INPUT</span><h2>Signed route</h2></div><button className="network-chip" type="button" onClick={() => void switchNetwork().catch(() => undefined)}><i /> RH Testnet <span>46630</span></button></header>
-            <div className={`preview-banner${deployment.ready ? " live-banner" : ""}`}><i /> {deployment.ready ? "Router v2 execution · testnet assets have no monetary value" : "Router v1 is read-only · deploy and publish v2 before execution"}</div>
+            <div className={`preview-banner${deployment.ready ? " live-banner" : ""}`}><i /> {
+              deployment.mode === "allowlisted-staging"
+                ? deployment.ready
+                  ? "Allowlisted Router v2 staging · non-release · testnet assets only"
+                  : "Allowlisted Router v2 staging · canonical E2E required before UI execution"
+                : deployment.ready
+                  ? "Router v2 execution · testnet assets have no monetary value"
+                  : "Router v1 is read-only · deploy and publish v2 before execution"
+            }</div>
 
             <div className="mode-tabs" role="group" aria-label="Routing mode">
               <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Best net result</button>
               <button type="button" className={routingMode === "v4" ? "active" : ""} onClick={() => setRoutingMode("v4")}>V4 only</button>
               <button type="button" className={routingMode === "v3" ? "active" : ""} onClick={() => setRoutingMode("v3")}>Synthra v3</button>
-              <button type="button" className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Verified hooks</button>
+              <button type="button" disabled={deployment.allowlistedStaging} className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Verified hooks</button>
             </div>
-            <div className="mode-warning">Hook mode fails closed when no reviewed Aggregator Hook deployment is configured. Plain routes are never relabeled as hook-powered.</div>
+            <div className="mode-warning">{deployment.allowlistedStaging
+              ? "Aggregator Hook mode is disabled in non-release staging. Only verified direct v4 and Synthra v3 routes are eligible."
+              : "Hook mode fails closed when no reviewed Aggregator Hook deployment is configured. Plain routes are never relabeled as hook-powered."}</div>
 
             <label className="token-box">
               <span className="token-box-label">YOU PAY</span>
@@ -464,9 +474,10 @@ export default function TradeApp() {
             <label className="permit-toggle"><input type="checkbox" checked={preferPermit2} onChange={(event) => setPreferPermit2(event.target.checked)} /><span>Use Permit2 signature when an allowance is available</span></label>
             {account && balancesReady && !balanceEnough && <div className="transaction-status error"><i /><span>{!tokenBalanceEnough ? `Insufficient ${sellToken.displaySymbol} balance.` : "Insufficient ETH for the reserved network gas."}</span></div>}
             {quote?.selected.priceImpactBps !== undefined && quote.selected.priceImpactBps >= 100 && <div className="transaction-status error"><i /><span>High estimated price impact: {(quote.selected.priceImpactBps / 100).toFixed(2)}%. Reduce size or review another route.</span></div>}
+            {account && quoteError && <div className="transaction-status error"><i /><span>{quoteError}</span></div>}
             {quote && !quote.executable && quote.deploymentReason && <div className="transaction-status error"><i /><span>{quote.deploymentReason}</span></div>}
 
-            {account && isCorrectChain && !deployment.ready ? <Link className="connect-action setup-action" href="/setup">Prepare Router v2 deployment</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
+            {account && isCorrectChain && !deployment.ready ? <Link className="connect-action setup-action" href="/setup">{deployment.stagingConfigured ? "Staging E2E pending" : "Prepare Router v2 deployment"}</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
             {tx.message && <div className={`transaction-status ${tx.stage}`}><i /><span>{tx.message}</span>{tx.hash && <a href={`${RH_TESTNET_EXPLORER}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
             {tx.stage === "success" && tx.message?.startsWith("Settled") && <Link className="receipt-link" href="/proofs">Open settlement receipt →</Link>}
             <p className="swap-note">All assets are third-party testnet fixtures with no monetary value. Symbols do not represent equity, issuer affiliation, or guaranteed pricing.</p>

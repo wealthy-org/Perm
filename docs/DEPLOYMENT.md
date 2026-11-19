@@ -193,7 +193,7 @@ Injected wallets continue to work without it.
 
 ## 7. Produce candidate E2E evidence before promotion
 
-Deploy a controlled staging build against the candidate manifest. It may use the explicit staging override, but the shared public manifest must remain Router v1. From wallets that are neither treasury nor governance, execute and record:
+Deploy a controlled release-candidate staging build while the shared public manifest remains Router v1. This full release-evidence environment is distinct from the interim wallet-allowlisted, burner-signer path in `docs/ALLOWLISTED_STAGING.md`; interim staging transactions do not satisfy the release custody, operations, WalletConnect, assurance, or hook gates. From wallets that are neither treasury nor governance, execute and record:
 
 1. native↔token through direct v4;
 2. native↔token through Synthra v3;
@@ -277,7 +277,7 @@ pnpm deployments:promote
 
 The command additionally requires treasury and quote-signer role separation, fresh hook/E2E/operations/assurance verification from the last seven days, and revalidates all signed assurance artifacts. It archives the v1 manifest, writes the v2 official manifest with `executionReady: true`, and records the previous router. There is no bypass for an empty Aggregator Hook registry.
 
-Restart all services, rerun the strict monitor and verify `/api/health?requireExecution=1` remains ready. Do not use `NEXT_PUBLIC_PERM_EXECUTION_READY=1` for the public release; that override is for controlled staging only.
+Restart all services, rerun the strict monitor and verify `/api/health?requireExecution=1` remains ready. `NEXT_PUBLIC_PERM_EXECUTION_READY=1` is reserved for the fully provisioned release-candidate operations environment described above and still requires every strict health gate; never use it with burner staging or leave it on as a substitute for official-manifest promotion. The public release must derive readiness from the promoted official manifest and authenticated remote custody. `allowlisted-testnet-staging`, staging-local keys, and `/api/health?requireStaging=1` can never substitute for that gate.
 
 ## 12. Incident and rollback
 

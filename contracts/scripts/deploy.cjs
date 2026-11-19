@@ -58,12 +58,17 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("DEPLOYER_PRIVATE_KEY is required in the process environment");
   const rehearsal = process.env.DEPLOYMENT_REHEARSAL === "1";
+  const staging = process.env.DEPLOYMENT_STAGING === "1";
+  if (rehearsal && staging) throw new Error("DEPLOYMENT_REHEARSAL and DEPLOYMENT_STAGING are mutually exclusive");
+  if (staging && process.env.CONFIRM_NON_RELEASE_STAGING !== "1") {
+    throw new Error("CONFIRM_NON_RELEASE_STAGING=1 is required for a testnet-only staging deployment");
+  }
   if (rehearsal && process.env.VERIFY === "1") throw new Error("Source verification is disabled during a fork rehearsal");
   const repositoryRoot = path.resolve(__dirname, "../..");
   const releaseCommitSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
   const repositoryChanges = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
   if (!/^[0-9a-f]{40}$/i.test(releaseCommitSha)) throw new Error("Unable to bind deployment to a Git commit");
-  if (!rehearsal && repositoryChanges) throw new Error("Shared candidate deployment requires a clean committed repository");
+  if (!rehearsal && !staging && repositoryChanges) throw new Error("Shared candidate deployment requires a clean committed repository");
   if (process.env.RELEASE_COMMIT_SHA && process.env.RELEASE_COMMIT_SHA.toLowerCase() !== releaseCommitSha.toLowerCase()) {
     throw new Error("RELEASE_COMMIT_SHA does not match the checked-out commit");
   }
@@ -84,7 +89,7 @@ async function main() {
   const dependencyCodehashes = Object.fromEntries(await Promise.all(Object.entries(dependencyAddresses)
     .map(async ([label, value]) => [label, ethers.keccak256(await ethers.provider.getCode(value))])));
 
-  if (!rehearsal) {
+  if (!rehearsal && !staging) {
     for (const name of [
       "QUOTE_SIGNER_ADDRESS", "OWNER_ADDRESS", "TREASURY_ADDRESS", "PAUSE_GUARDIAN_ADDRESS",
       "TIMELOCK_PROPOSER_ADDRESS", "TIMELOCK_DELAY_SECONDS",
@@ -92,6 +97,12 @@ async function main() {
       if (!process.env[name]) throw new Error(`${name} is required for a shared candidate deployment`);
     }
     if (process.env.QUOTE_SIGNER_PRIVATE_KEY) throw new Error("Use only QUOTE_SIGNER_ADDRESS during shared deployment; the signer private key belongs only in the quote service");
+  }
+  if (staging) {
+    for (const name of ["QUOTE_SIGNER_ADDRESS", "OWNER_ADDRESS", "TREASURY_ADDRESS", "PAUSE_GUARDIAN_ADDRESS"]) {
+      if (!process.env[name]) throw new Error(`${name} is required for an explicit staging deployment`);
+    }
+    if (process.env.QUOTE_SIGNER_PRIVATE_KEY) throw new Error("Staging deployment accepts only QUOTE_SIGNER_ADDRESS; keep its burner key in the quote service environment");
   }
   const quoteSigner = process.env.QUOTE_SIGNER_ADDRESS
     || (process.env.QUOTE_SIGNER_PRIVATE_KEY ? new ethers.Wallet(process.env.QUOTE_SIGNER_PRIVATE_KEY).address : undefined)
@@ -109,7 +120,7 @@ async function main() {
   if (!proposer && timelockDelay !== 0) throw new Error("TIMELOCK_PROPOSER_ADDRESS is required when TIMELOCK_DELAY_SECONDS is set");
   const proposerAddress = proposer ? address("TIMELOCK_PROPOSER_ADDRESS", proposer) : undefined;
 
-  if (!rehearsal) {
+  if (!rehearsal && !staging) {
     if (!proposerAddress) throw new Error("A timelock proposer is required for a shared candidate deployment");
     if (requestedOwner.toLowerCase() !== proposerAddress.toLowerCase()) {
       throw new Error("OWNER_ADDRESS must equal the reviewed timelock proposer/multisig");
@@ -130,9 +141,15 @@ async function main() {
     await requireCode("PAUSE_GUARDIAN_ADDRESS multisig", pauseGuardian);
     await requireNoCode("QUOTE_SIGNER_ADDRESS", quoteSigner);
   }
+  if (staging) {
+    if (deployer.address.toLowerCase() === quoteSigner.toLowerCase()) {
+      throw new Error("The staging deployer and burner quote signer must use separate fresh testnet-only keys");
+    }
+    await requireNoCode("QUOTE_SIGNER_ADDRESS", quoteSigner);
+  }
 
   if (proposerAddress) {
-    const minimumDelay = rehearsal ? 1 : 172_800;
+    const minimumDelay = rehearsal || staging ? 1 : 172_800;
     if (timelockDelay < minimumDelay) throw new Error(`TIMELOCK_DELAY_SECONDS must be at least ${minimumDelay} for this deployment`);
     const Timelock = await ethers.getContractFactory("PermTimelock");
     timelock = await Timelock.deploy(timelockDelay, [proposerAddress], [ethers.ZeroAddress], ethers.ZeroAddress);
@@ -268,8 +285,11 @@ async function main() {
     policy: { version: 1, platformFeeBps: 20, rebateShareBps: 2500 },
     deploymentBlock: Number(routerReceipt.blockNumber),
     ownershipStatus: finalOwner.toLowerCase() === deployer.address.toLowerCase() ? "accepted" : "pending-acceptance",
-    sourceVerification: rehearsal ? "skipped-rehearsal" : "pending",
-    releaseStatus: rehearsal ? "rehearsal" : "candidate",
+    sourceVerification: rehearsal ? "skipped-rehearsal" : staging ? "skipped-non-release-staging" : "pending",
+    releaseStatus: rehearsal ? "rehearsal" : staging ? "non-release-allowlisted-staging" : "candidate",
+    nonRelease: staging,
+    stagingExecutionPolicy: staging ? "server-wallet-allowlist-required" : null,
+    stagingRoutePolicy: staging ? "direct-v4-v3-only" : null,
     postDeploymentChecks: "passed",
     executionReady: false,
     deploymentTransactions: [
@@ -286,7 +306,9 @@ async function main() {
   };
   const defaultOutput = path.join(__dirname, rehearsal
     ? "../../deployments/robinhood-testnet.rehearsal.json"
-    : "../../deployments/robinhood-testnet.v2-candidate.json");
+    : staging
+      ? "../../deployments/robinhood-testnet.staging.json"
+      : "../../deployments/robinhood-testnet.v2-candidate.json");
   const output = process.env.DEPLOYMENT_OUTPUT ? path.resolve(process.cwd(), process.env.DEPLOYMENT_OUTPUT) : defaultOutput;
   fs.mkdirSync(path.dirname(output), { recursive: true });
   fs.writeFileSync(output, `${JSON.stringify(deployment, null, 2)}\n`);
@@ -294,7 +316,7 @@ async function main() {
   console.log(`PermRouter v2: ${deployment.permRouter}`);
   console.log(`PermV4Adapter: ${deployment.v4Adapter}`);
   console.log(`PermV3Adapter: ${deployment.v3Adapter}`);
-  console.log(`${rehearsal ? "Rehearsal" : "Candidate"} manifest written to ${output}`);
+  console.log(`${rehearsal ? "Rehearsal" : staging ? "Non-release staging" : "Candidate"} manifest written to ${output}`);
 
   if (process.env.VERIFY === "1") {
     if (timelock) await verify({
@@ -306,8 +328,10 @@ async function main() {
     await verify({ address: deployment.v3Adapter, constructorArguments: [deployer.address, deployment.permRouter, SYNTHRA.swapRouter02, SYNTHRA.weth] });
     deployment.sourceVerification = "submitted";
     fs.writeFileSync(output, `${JSON.stringify(deployment, null, 2)}\n`);
-  } else {
+  } else if (!staging) {
     console.log("Set VERIFY=1 for Blockscout source publication before public enablement.");
+  } else {
+    console.log("Source publication is optional for this non-release allowlisted staging deployment and remains mandatory before any release promotion.");
   }
 }
 

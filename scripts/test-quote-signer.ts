@@ -29,9 +29,16 @@ async function main() {
   const previous = Object.fromEntries([
     "PERM_QUOTE_SIGNER_MODE", "PERM_QUOTE_SIGNER_URL", "PERM_QUOTE_SIGNER_TOKEN",
     "PERM_QUOTE_SIGNER_PRIVATE_KEY", "QUOTE_SIGNER_ADDRESS", "NODE_ENV",
+    "PERM_EXECUTION_MODE", "NEXT_PUBLIC_PERM_EXECUTION_MODE", "PERM_STAGING_CHAIN_ID",
+    "PERM_STAGING_WALLET_ALLOWLIST", "PERM_STAGING_ALLOW_BURNER_SIGNER",
+    "NEXT_PUBLIC_PERM_ROUTER_ADDRESS",
   ].map((key) => [key, process.env[key]]));
 
   try {
+    for (const key of [
+      "PERM_EXECUTION_MODE", "NEXT_PUBLIC_PERM_EXECUTION_MODE", "PERM_STAGING_CHAIN_ID",
+      "PERM_STAGING_WALLET_ALLOWLIST", "PERM_STAGING_ALLOW_BURNER_SIGNER", "NEXT_PUBLIC_PERM_ROUTER_ADDRESS",
+    ]) delete process.env[key];
     process.env.PERM_QUOTE_SIGNER_MODE = "local";
     process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY = localKey;
     delete process.env.PERM_QUOTE_SIGNER_URL;
@@ -46,6 +53,34 @@ async function main() {
     const mutableEnvironment = process.env as Record<string, string | undefined>;
     mutableEnvironment.NODE_ENV = "production";
     await assert.rejects(() => signPermQuote(domain, message), /requires authenticated remote custody/i);
+    if (previous.NODE_ENV === undefined) delete mutableEnvironment.NODE_ENV;
+    else mutableEnvironment.NODE_ENV = previous.NODE_ENV;
+
+    process.env.PERM_QUOTE_SIGNER_MODE = "staging-local";
+    process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY = localKey;
+    process.env.QUOTE_SIGNER_ADDRESS = local.address;
+    process.env.PERM_EXECUTION_MODE = "allowlisted-testnet-staging";
+    process.env.NEXT_PUBLIC_PERM_EXECUTION_MODE = "allowlisted-testnet-staging";
+    process.env.PERM_STAGING_CHAIN_ID = "46630";
+    process.env.PERM_STAGING_WALLET_ALLOWLIST = message.account;
+    process.env.PERM_STAGING_ALLOW_BURNER_SIGNER = "1";
+    process.env.NEXT_PUBLIC_PERM_ROUTER_ADDRESS = router;
+    mutableEnvironment.NODE_ENV = "production";
+    const stagingConfiguration = quoteSignerConfiguration();
+    assert.equal(stagingConfiguration.configured, true);
+    assert.equal(stagingConfiguration.custodyReady, false);
+    assert.equal(stagingConfiguration.stagingReady, true);
+    assert.equal(quoteSignerExecutionReady(stagingConfiguration, "production"), true);
+    const stagingResult = await signPermQuote(domain, message);
+    assert.equal(await recoverTypedDataAddress({ domain, types: PERM_QUOTE_TYPES, primaryType: "PermQuote", message, signature: stagingResult.signature }), local.address);
+    await assert.rejects(() => signPermQuote(domain, { ...message, account: attacker.address }), /not on the staging wallet allowlist/i);
+    process.env.PERM_STAGING_ALLOW_BURNER_SIGNER = "0";
+    assert.equal(quoteSignerConfiguration().configured, false);
+
+    for (const key of [
+      "PERM_EXECUTION_MODE", "NEXT_PUBLIC_PERM_EXECUTION_MODE", "PERM_STAGING_CHAIN_ID",
+      "PERM_STAGING_WALLET_ALLOWLIST", "PERM_STAGING_ALLOW_BURNER_SIGNER", "NEXT_PUBLIC_PERM_ROUTER_ADDRESS",
+    ]) delete process.env[key];
     if (previous.NODE_ENV === undefined) delete mutableEnvironment.NODE_ENV;
     else mutableEnvironment.NODE_ENV = previous.NODE_ENV;
 
@@ -98,7 +133,7 @@ async function main() {
     await assert.rejects(() => signPermQuote(domain, message), /response is too large/i);
     responseMode = "chunked-oversized";
     await assert.rejects(() => signPermQuote(domain, message), /response is too large/i);
-    console.log("Quote signer: production rejects local custody; authenticated remote signatures verify; malformed, mistyped, oversized, and mismatched responses fail closed");
+    console.log("Quote signer: production rejects ordinary local custody; explicit chain-pinned allowlisted staging accepts only its burner key; remote signatures verify and malformed responses fail closed");
   } finally {
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(previous)) {

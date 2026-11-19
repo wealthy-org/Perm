@@ -6,6 +6,7 @@ import {
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { allowlistedStagingConfiguration, isAllowlistedStagingWallet } from "./staging-policy";
 
 export const PERM_QUOTE_TYPES = {
   PermQuote: [
@@ -49,10 +50,11 @@ type QuoteDomain = {
 };
 
 export type QuoteSignerConfiguration = {
-  mode: "local" | "remote" | "unconfigured";
+  mode: "local" | "staging-local" | "remote" | "unconfigured";
   address: Address | null;
   configured: boolean;
   custodyReady: boolean;
+  stagingReady: boolean;
   reason?: string;
 };
 
@@ -100,40 +102,80 @@ export function quoteSignerConfiguration(): QuoteSignerConfiguration {
   const mode = process.env.PERM_QUOTE_SIGNER_MODE;
   if (mode === "remote") {
     const address = process.env.QUOTE_SIGNER_ADDRESS;
-    if (!address || !isAddress(address)) return { mode, address: null, configured: false, custodyReady: false, reason: "QUOTE_SIGNER_ADDRESS is invalid" };
+    if (!address || !isAddress(address)) return { mode, address: null, configured: false, custodyReady: false, stagingReady: false, reason: "QUOTE_SIGNER_ADDRESS is invalid" };
     try {
       remoteUrl();
     } catch (cause) {
-      return { mode, address: getAddress(address), configured: false, custodyReady: false, reason: cause instanceof Error ? cause.message : "Remote signer URL is invalid" };
+      return { mode, address: getAddress(address), configured: false, custodyReady: false, stagingReady: false, reason: cause instanceof Error ? cause.message : "Remote signer URL is invalid" };
     }
     if (!process.env.PERM_QUOTE_SIGNER_URL || (process.env.PERM_QUOTE_SIGNER_TOKEN || "").length < 16) {
-      return { mode, address: getAddress(address), configured: false, custodyReady: false, reason: "Remote signer URL/token is missing" };
+      return { mode, address: getAddress(address), configured: false, custodyReady: false, stagingReady: false, reason: "Remote signer URL/token is missing" };
     }
     if (process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY) {
-      return { mode, address: getAddress(address), configured: false, custodyReady: false, reason: "Remote mode must not expose a local private key" };
+      return { mode, address: getAddress(address), configured: false, custodyReady: false, stagingReady: false, reason: "Remote mode must not expose a local private key" };
     }
-    return { mode, address: getAddress(address), configured: true, custodyReady: true };
+    return { mode, address: getAddress(address), configured: true, custodyReady: true, stagingReady: true };
   }
-  if (mode && mode !== "local") return { mode: "unconfigured", address: null, configured: false, custodyReady: false, reason: "PERM_QUOTE_SIGNER_MODE must be local or remote" };
+
+  if (mode && mode !== "local" && mode !== "staging-local") {
+    return { mode: "unconfigured", address: null, configured: false, custodyReady: false, stagingReady: false, reason: "PERM_QUOTE_SIGNER_MODE must be local, staging-local or remote" };
+  }
   const key = process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY;
   if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    return { mode: "unconfigured", address: null, configured: false, custodyReady: false, reason: "Local quote signer key is missing" };
+    return { mode: "unconfigured", address: null, configured: false, custodyReady: false, stagingReady: false, reason: "Local quote signer key is missing" };
   }
-  return { mode: "local", address: privateKeyToAccount(key as Hex).address, configured: true, custodyReady: false };
+  const account = privateKeyToAccount(key as Hex);
+  if (mode === "staging-local") {
+    const staging = allowlistedStagingConfiguration();
+    if (!staging.configured) {
+      return { mode, address: account.address, configured: false, custodyReady: false, stagingReady: false, reason: staging.reason || "Allowlisted staging is not configured" };
+    }
+    if (!staging.localBurnerSignerAllowed) {
+      return { mode, address: account.address, configured: false, custodyReady: false, stagingReady: false, reason: "PERM_STAGING_ALLOW_BURNER_SIGNER must equal 1" };
+    }
+    const declaredAddress = process.env.QUOTE_SIGNER_ADDRESS;
+    if (!declaredAddress || !isAddress(declaredAddress) || getAddress(declaredAddress) !== account.address) {
+      return { mode, address: account.address, configured: false, custodyReady: false, stagingReady: false, reason: "QUOTE_SIGNER_ADDRESS must match the staging-local key" };
+    }
+    return { mode, address: account.address, configured: true, custodyReady: false, stagingReady: true };
+  }
+  return { mode: "local", address: account.address, configured: true, custodyReady: false, stagingReady: false };
 }
 
 export function quoteSignerExecutionReady(
   configuration: QuoteSignerConfiguration = quoteSignerConfiguration(),
   environment = process.env.NODE_ENV,
 ) {
-  return configuration.configured && (configuration.custodyReady || environment !== "production");
+  if (!configuration.configured) return false;
+  if (configuration.custodyReady) return true;
+  if (configuration.mode === "staging-local") return configuration.stagingReady;
+  return configuration.mode === "local" && environment !== "production";
 }
 
 export async function signPermQuote(domain: QuoteDomain, message: PermQuoteMessage): Promise<{ address: Address; signature: Hex }> {
   const configuration = quoteSignerConfiguration();
   if (!configuration.configured || !configuration.address) throw new Error(configuration.reason || "Quote signer is not configured");
-  if (configuration.mode === "local") {
-    if (process.env.NODE_ENV === "production") throw new Error("Production quote signing requires authenticated remote custody");
+
+  const staging = allowlistedStagingConfiguration();
+  if (staging.requested) {
+    if (!staging.configured) throw new Error(staging.reason || "Allowlisted staging is not configured");
+    if (!isAllowlistedStagingWallet(message.account, staging)) throw new Error("Quote account is not on the staging wallet allowlist");
+    if (domain.chainId !== staging.chainId || message.chainId !== BigInt(staging.chainId || 0)) {
+      throw new Error("Staging quote signing is pinned to Robinhood testnet chain 46630");
+    }
+    const configuredRouter = process.env.NEXT_PUBLIC_PERM_ROUTER_ADDRESS;
+    if (!configuredRouter || !isAddress(configuredRouter) || getAddress(configuredRouter) !== getAddress(domain.verifyingContract)) {
+      throw new Error("Staging quote domain does not match NEXT_PUBLIC_PERM_ROUTER_ADDRESS");
+    }
+  }
+
+  if (configuration.mode === "local" || configuration.mode === "staging-local") {
+    if (configuration.mode === "local" && process.env.NODE_ENV === "production") {
+      throw new Error("Production quote signing requires authenticated remote custody");
+    }
+    if (configuration.mode === "staging-local" && !configuration.stagingReady) {
+      throw new Error("The testnet staging burner signer is not explicitly enabled");
+    }
     const account = privateKeyToAccount(process.env.PERM_QUOTE_SIGNER_PRIVATE_KEY as Hex);
     const signature = await account.signTypedData({ domain, types: PERM_QUOTE_TYPES, primaryType: "PermQuote", message });
     return { address: account.address, signature };

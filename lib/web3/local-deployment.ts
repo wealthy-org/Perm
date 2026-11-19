@@ -7,9 +7,13 @@ import {
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
   PERMIT2_ADDRESS,
+  ALLOWLISTED_STAGING_BUILD,
+  DEPLOYMENT_MODE,
   DEPLOYMENT_READY,
   RH_TESTNET_CHAIN_ID,
   ROUTER_VERSION,
+  STAGING_DEPLOYMENT_CONFIGURED,
+  STAGING_E2E_DECLARED,
 } from "./config";
 
 export type LocalPermDeployment = {
@@ -99,6 +103,10 @@ export function usePermDeployment() {
     version,
     local,
     ready,
+    mode: local ? "local-development" as const : DEPLOYMENT_MODE,
+    allowlistedStaging: !local && ALLOWLISTED_STAGING_BUILD,
+    stagingConfigured: !local && STAGING_DEPLOYMENT_CONFIGURED,
+    stagingE2eDeclared: !local && STAGING_E2E_DECLARED,
     source: local ? "browser" as const : router ? "manifest" as const : "none" as const,
   };
 }

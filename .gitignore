@@ -8,9 +8,11 @@ out/
 *.log
 *.tsbuildinfo
 .hardhat-cache/
+.staging/
 contracts/artifacts/
 coverage/
 coverage.json
 playwright-report/
 test-results/
 deployments/*.rehearsal.json
+deployments/*.staging.json

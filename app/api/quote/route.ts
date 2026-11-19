@@ -12,7 +12,9 @@ import {
 } from "viem";
 import deployment from "@/deployments/robinhood-testnet.json";
 import {
-  DEPLOYMENT_READY,
+  ALLOWLISTED_STAGING_BUILD,
+  RELEASE_DEPLOYMENT_READY,
+  STAGING_DEPLOYMENT_CONFIGURED,
   PERM_ROUTER_ADDRESS,
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
@@ -30,6 +32,7 @@ import { LIVE_TOKEN_MAP, LIVE_TOKENS, type LiveToken, type LiveTokenSymbol } fro
 import type { LiveQuote, LiveQuoteCandidate, QuoteRouteStep } from "@/lib/web3/quote";
 import { RequestBodyTooLargeError, consumeRateLimit, readJsonBody, requestIdentity, safeServerError, ttlCached } from "@/lib/server/runtime";
 import { PERM_QUOTE_TYPES, quoteSignerConfiguration, quoteSignerExecutionReady, signPermQuote } from "@/lib/server/quote-signer";
+import { allowlistedStagingConfiguration, isAllowlistedStagingWallet } from "@/lib/server/staging-policy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -85,6 +88,7 @@ function routeDataFor(steps: InternalStep[]): Hex {
 }
 
 function configuredHookPools(): V4PoolFixture[] {
+  if (ALLOWLISTED_STAGING_BUILD || allowlistedStagingConfiguration().requested) return [];
   const override = process.env.PERM_AGGREGATOR_HOOKS_JSON;
   if (override && override.length > 65_536) throw new Error("PERM_AGGREGATOR_HOOKS_JSON is too large");
   const parsed = override ? JSON.parse(override) : deployment.aggregatorHooks || [];
@@ -142,6 +146,16 @@ export async function POST(request: NextRequest) {
   const recipient = getAddress(body.recipient || ZERO_ADDRESS) as Address;
   const referrer = getAddress(body.referrer || ZERO_ADDRESS) as Address;
   if (account !== ZERO_ADDRESS && referrer.toLowerCase() === account.toLowerCase()) return error("Self-referral is not permitted");
+
+  const staging = allowlistedStagingConfiguration();
+  const stagingRequested = ALLOWLISTED_STAGING_BUILD || staging.requested;
+  if (stagingRequested && routingMode === "hooks") {
+    return error("Aggregator Hook routing is disabled in allowlisted staging; use a verified direct v4 or Synthra v3 route", 422);
+  }
+  if (stagingRequested && account !== ZERO_ADDRESS) {
+    if (!staging.configured) return error(staging.reason || "Allowlisted staging is not configured", 503);
+    if (!isAllowlistedStagingWallet(account, staging)) return error("This wallet is not authorized for allowlisted staging execution", 403);
+  }
 
   let amountIn: bigint;
   try {
@@ -352,7 +366,7 @@ export async function POST(request: NextRequest) {
       if (routingMode === "best" || routingMode === "v3") {
         for (const fee of V3_FEES) tasks.push(() => v3Step(input, output, amount, fee).catch(() => null));
       }
-      if (routingMode === "best" || routingMode === "v4" || routingMode === "hooks") {
+      if (!stagingRequested && (routingMode === "best" || routingMode === "v4" || routingMode === "hooks")) {
         for (const pool of pools.filter((item) => item.sourceType === "aggregator-hook").slice(0, 16)) tasks.push(() => v4Step(input, output, amount, pool).catch(() => null));
       }
       return (await runLimited(tasks)).filter((step): step is InternalStep => step !== null);
@@ -484,12 +498,35 @@ export async function POST(request: NextRequest) {
     const quoteId = hashTypedData({ domain, types: PERM_QUOTE_TYPES, primaryType: "PermQuote", message });
 
     const signerRuntimeAllowed = quoteSignerExecutionReady(signer);
-    let executable = Boolean(DEPLOYMENT_READY && account !== ZERO_ADDRESS && recipient !== ZERO_ADDRESS && signerRuntimeAllowed);
+    const releaseSignerAllowed = signer.configured && signer.custodyReady;
+    const stagingSignerAllowed = signer.configured && signer.stagingReady && signerRuntimeAllowed;
+    const releaseExecutable = RELEASE_DEPLOYMENT_READY && releaseSignerAllowed;
+    const stagingExecutable = Boolean(
+      stagingRequested
+        && STAGING_DEPLOYMENT_CONFIGURED
+        && staging.configured
+        && isAllowlistedStagingWallet(account, staging)
+        && stagingSignerAllowed,
+    );
+    const executionMode = releaseExecutable
+      ? "release" as const
+      : stagingExecutable
+        ? "allowlisted-staging" as const
+        : "read-only" as const;
+    let executable = Boolean(
+      (releaseExecutable || stagingExecutable)
+        && account !== ZERO_ADDRESS
+        && recipient !== ZERO_ADDRESS,
+    );
     let deploymentReason: string | undefined;
     if (ROUTER_VERSION < 2) deploymentReason = "Router v2 is required for signed multi-venue execution; the shared manifest still points to v1.";
-    else if (!DEPLOYMENT_READY) deploymentReason = "The Router v2 candidate has not passed and been promoted through the release gate.";
+    else if (stagingRequested && !STAGING_DEPLOYMENT_CONFIGURED) deploymentReason = "The explicit Router v2 staging deployment is incomplete or invalid.";
+    else if (stagingRequested && !staging.configured) deploymentReason = staging.reason || "Allowlisted staging is not configured.";
+    else if (stagingRequested && account !== ZERO_ADDRESS && !isAllowlistedStagingWallet(account, staging)) deploymentReason = "This wallet is not authorized for allowlisted staging execution.";
+    else if (!RELEASE_DEPLOYMENT_READY && !stagingRequested) deploymentReason = "The Router v2 candidate has not passed and been promoted through the release gate.";
     else if (!signer.configured) deploymentReason = signer.reason || "The quote signer is not configured.";
-    else if (!signerRuntimeAllowed) deploymentReason = "Production execution requires authenticated remote signer custody.";
+    else if (stagingRequested && !stagingSignerAllowed) deploymentReason = signer.reason || "The testnet-only staging signer is not explicitly enabled.";
+    else if (!stagingRequested && !releaseSignerAllowed) deploymentReason = "Production execution requires authenticated remote signer custody.";
     else if (account === ZERO_ADDRESS || recipient === ZERO_ADDRESS) deploymentReason = "Connect a wallet and provide a recipient to request an executable signed quote.";
 
     const configuredRouter = PERM_ROUTER_ADDRESS;
@@ -546,6 +583,8 @@ export async function POST(request: NextRequest) {
       blockNumber: block.number.toString(),
       requestFingerprint,
       executable,
+      executionMode,
+      nonRelease: executionMode === "allowlisted-staging",
       deploymentReason,
       selected,
       candidates,
