@@ -165,7 +165,7 @@ async function main() {
     args: [request, quote.quoteSignature, { nonce: 0n, deadline: 0n, signature: "0x" }],
     value: request.amountIn,
   });
-  const transactionHash = await walletClient.writeContract(simulation.request);
+  const transactionHash = await walletClient.writeContract({ ...simulation.request, account });
   const confirmationCount = Number(process.env.STAGING_E2E_CONFIRMATIONS || process.env.PERM_STAGING_E2E_CONFIRMATIONS || "1");
   required(Number.isInteger(confirmationCount) && confirmationCount >= 1 && confirmationCount <= 100, "STAGING_E2E_CONFIRMATIONS must be between 1 and 100");
   const receipt = await publicClient.waitForTransactionReceipt({ hash: transactionHash, confirmations: confirmationCount, timeout: 180_000 });
