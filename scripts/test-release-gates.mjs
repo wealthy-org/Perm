@@ -4,8 +4,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL("..", import.meta.url).pathname);
+const root = fileURLToPath(new URL("..", import.meta.url));
 const officialPath = path.join(root, "deployments/robinhood-testnet.json");
 const hash = async (file) => createHash("sha256").update(await readFile(file)).digest("hex");
 const temp = await mkdtemp(path.join(os.tmpdir(), "perm-release-gates-"));

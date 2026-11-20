@@ -18,7 +18,20 @@ if (configuredIgnores.length !== 0 || /\bauditConfig\s*:/i.test(workspace)) {
 }
 
 const args = ["--ignore-workspace", "audit", ...(prod ? ["--prod"] : []), "--json"];
-const run = spawnSync("pnpm", args, { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+const pnpmExecPath = process.env.npm_execpath;
+if (!pnpmExecPath || !fs.existsSync(pnpmExecPath) || pnpmExecPath.includes('"')) {
+  throw new Error("Run this audit through the pinned pnpm package script");
+}
+let command = pnpmExecPath;
+let commandArgs = args;
+if (/\.[cm]?js$/i.test(pnpmExecPath)) {
+  command = process.execPath;
+  commandArgs = [pnpmExecPath, ...args];
+} else if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(pnpmExecPath)) {
+  command = process.env.ComSpec || "cmd.exe";
+  commandArgs = ["/d", "/s", "/c", [`"${pnpmExecPath}"`, ...args].join(" ")];
+}
+const run = spawnSync(command, commandArgs, { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
 if (run.error) throw run.error;
 let report;
 try { report = JSON.parse(run.stdout); } catch {
