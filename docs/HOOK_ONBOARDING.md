@@ -1,6 +1,8 @@
 # Aggregator Hook evidence schema
 
-No Aggregator Hook is currently approved for the Robinhood testnet release. Fresh Router-v2 candidates leave `hookProviderIds(v4Adapter)` at the zero sentinel, so hook steps fail closed even though direct v4 is enabled. Do not copy the example values below into a candidate. A real entry is added only after independent review; governance then codehash-pins the hook and configures the distinct provider identity so a controlled staging settlement can produce canonical evidence.
+No Aggregator Hook is currently approved for the Robinhood testnet release. The bounded chain review found only a third-party Realm ETF emitter for the canonical event topics, on a different PoolManager; see [`AGGREGATOR_HOOK_RESEARCH.md`](AGGREGATOR_HOOK_RESEARCH.md). Mainnet observations are not testnet availability.
+
+Fresh Router-v2 candidates leave `hookProviderIds(v4Adapter)` at the zero sentinel, so hook steps fail closed even though direct v4 is enabled. Do not copy the example values below into a candidate. A real entry is added only after official chain-specific provenance, independent source/runtime/dependency review, and a scoped audit artifact exist; governance then codehash-pins the hook and configures the distinct provider identity so a controlled staging settlement can produce canonical evidence.
 
 Each object in candidate-manifest `aggregatorHooks` must use this shape:
 
