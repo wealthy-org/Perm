@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   refresh-registry:
+    if: github.event_name == 'workflow_dispatch' || vars.PERM_POOL_DISCOVERY_ENABLED == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

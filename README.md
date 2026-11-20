@@ -2,7 +2,7 @@
 
 Perm adalah antarmuka dan Router exact-input untuk membandingkan rute Uniswap v4, Synthra v3, multi-hop, dan—hanya jika benar-benar tersedia—Aggregator Hooks yang sudah diverifikasi di Robinhood Chain Testnet.
 
-> **Status rilis:** kode Router v2 dan seluruh jalur produknya sudah ada, tetapi manifest publik masih menunjuk Router v1. Karena itu quote live bersifat read-only dan `executable: false` sampai deployment v2 diverifikasi, ownership diterima, lalu dipromosikan secara eksplisit. Tidak ada deployment v2 yang diklaim live oleh repository ini.
+> **Status rilis:** manifest resmi masih menunjuk Router v1 dan release execution tetap fail-closed. Router v2 sudah live hanya sebagai staging testnet non-release yang dibatasi allowlist di `https://perm-iota.vercel.app`; Router dan kedua adapternya sudah source-verified, tetapi memakai governance satu EOA dan local testnet burner signer. Alamat, codehash, source links, serta transaksi E2E direct-v4 dipublikasikan di [`deployments/robinhood-testnet.v2-staging.json`](deployments/robinhood-testnet.v2-staging.json). Aggregator Hook tetap dinonaktifkan.
 
 Semua token adalah fixture testnet tanpa nilai. Simbol seperti NVDA, AAPL, TSLA, dan lain-lain bukan saham, bukan klaim kepemilikan, dan tidak menyatakan afiliasi dengan issuer.
 
@@ -109,7 +109,7 @@ PERM_QUOTE_SIGNER_TOKEN='server-only credential'
 
 Alamat signer harus sama dengan `PermRouter.quoteSigner()`. Service membatasi stream respons, menolak redirect/content-type yang salah, memulihkan setiap signature EIP-712, dan menolak identitas/signature yang tidak cocok. Key maupun credential tidak boleh memakai prefix `NEXT_PUBLIC_` atau masuk repository. Health execution menolak mode raw-key. Sebelum release, jalankan `pnpm --silent release:probe-signer` terhadap KMS/HSM nyata dan ikat SHA-256 log tanpa signature itu ke attestation custody.
 
-Selama manifest masih Router v1, API tetap tidak akan menandatangani quote executable walaupun signer tersedia.
+Mode release resmi tetap tidak akan menandatangani quote executable selama manifest resmi masih Router v1. Pengecualian hanya berlaku pada mode eksplisit `allowlisted-testnet-staging`: server menandatangani quote untuk akun allowlist dengan burner signer testnet, selalu melaporkan `executionReady: false`, dan tidak dapat memenuhi gate rilis.
 
 ## Durable indexer
 
@@ -199,10 +199,10 @@ Jangan mengganti `deployments/robinhood-testnet.json` secara manual. Alurnya:
 2. `corepack pnpm contracts:deploy:testnet` → candidate manifest;
 3. selesaikan timelock minimum 48 jam dan `acceptOwnership()` untuk tiga kontrak;
 4. tunggu semua source verified;
-5. `corepack pnpm deployments:verify-candidate`;
-6. konfigurasi signer, RPC, indexer, dan monitor;
-7. promotion dengan phrase dan alamat router yang cocok;
-8. E2E dari wallet non-treasury.
+5. konfigurasi remote signer, primary/fallback RPC, PostgreSQL indexer, shared limiter, monitor, webhook, dan WalletConnect;
+6. rekam dan verifikasi seluruh E2E, Aggregator Hook, hosted-operations, serta assurance evidence;
+7. `corepack pnpm deployments:verify-candidate`;
+8. promotion eksplisit dengan phrase dan alamat router yang cocok.
 
 Lihat [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) untuk command dan rollback runbook lengkap.
 
@@ -246,10 +246,12 @@ contracts/scripts/deploy.cjs            Candidate deployment and post-checks
 contracts/scripts/prepare-ownership.cjs Timelock acceptance calldata
 scripts/discover-pools.cjs              Persistent pool discovery
 scripts/indexer.cjs                     PostgreSQL settlement indexer
-scripts/monitor.cjs                     Deployment/indexer monitor
+scripts/monitor.cjs                     Release deployment/indexer monitor
+scripts/monitor-staging.cjs             Allowlisted-staging operations monitor
 scripts/verify-candidate.cjs            Onchain + Blockscout release verifier
 scripts/promote-deployment.cjs           Explicit official-manifest promotion
 deployments/robinhood-testnet.json      Official Router v1 manifest (until promotion)
+deployments/robinhood-testnet.v2-staging.json Public non-release v2 deployment record
 deployments/v4-pools.json               Event-discovered v4 registry
 indexer/schema.sql                      Durable history schema
 ```
@@ -258,7 +260,8 @@ indexer/schema.sql                      Durable history schema
 
 - Tidak ada Aggregator Hook testnet yang sudah ditetapkan sebagai official saat ini.
 - Hook biasa/nonzero tidak otomatis disebut verified.
-- Source v1 publik masih pending dan v2 belum dideploy oleh workflow ini.
+- Source Router v2 staging dan kedua adapternya sudah verified exact-match; itu tidak mengubah statusnya menjadi release.
+- Manifest resmi masih Router v1. Staging v2 masih memakai satu EOA, burner signer, allowlist, dan hosted operations yang belum lengkap.
 - Audit independen, bug bounty, governance review, dan release mainnet terpisah masih wajib sebelum aset bernilai.
 
 ## Referensi

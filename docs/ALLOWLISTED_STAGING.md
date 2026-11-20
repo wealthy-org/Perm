@@ -4,6 +4,8 @@ This path exists only to make real Router-v2 swaps usable on Robinhood Chain tes
 
 The official `deployments/robinhood-testnet.json` manifest remains the release boundary. A staging deployment must keep `executionReady: false` and must never be promoted with `scripts/promote-deployment.cjs`.
 
+The current deployment's public, credential-free record is committed as `deployments/robinhood-testnet.v2-staging.json`. It publishes contract addresses, runtime codehashes, exact-match Blockscout source links, role concentration, direct-provider identities, and the canonical direct-v4 E2E transaction. It deliberately excludes private keys, wallet allowlists, signatures, database/RPC credentials, and webhook or WalletConnect configuration. Run `pnpm staging:test-public-manifest` after every update. The ignored `deployments/robinhood-testnet.staging.json` and `.staging/` files remain local operational artifacts and must never be staged.
+
 ## Enforced boundary
 
 - Chain is pinned to Robinhood testnet `46630`.
@@ -142,6 +144,7 @@ PERM_INDEXER_DEPLOYMENT_BLOCK=<staging deployment block>
 PERM_INDEXER_CONFIRM_NON_RELEASE=1
 PERM_MONITOR_ENABLED=0
 PERM_MONITOR_MODE=allowlisted-testnet-staging
+PERM_POOL_DISCOVERY_ENABLED=0
 PERM_STAGING_URL=https://perm-iota.vercel.app
 ```
 
@@ -154,7 +157,7 @@ RH_TESTNET_FALLBACK_RPC_URL=https://rpc.testnet.chain.robinhood.com
 PERM_ALERT_WEBHOOK_URL=<HTTPS JSON webhook>
 ```
 
-Run the indexer manually once while both `*_ENABLED` variables remain `0`. It applies the idempotent schema, backfills from the staging deployment block, stores a canonical block-hash cursor, and creates the shared PostgreSQL token bucket. Verify that the canonical E2E settlement is indexed, then enable the scheduled indexer. Run the staging monitor manually with `CONFIRM_ALERT_WEBHOOK_TEST=SEND_TEST_ALERT`; it requires both RPCs, a fresh canonical staging index, the shared rate limiter, `requireStaging=1 -> 200`, and `requireExecution=1 -> 503`. Enable its schedule only after the real webhook test succeeds.
+Run the indexer manually once while all scheduled-operation `*_ENABLED` variables remain `0`. It applies the idempotent schema, backfills from the staging deployment block, stores a canonical block-hash cursor, and creates the shared PostgreSQL token bucket. Verify that the canonical E2E settlement is indexed, then enable the scheduled indexer. Run the staging monitor manually with `CONFIRM_ALERT_WEBHOOK_TEST=SEND_TEST_ALERT`; it requires both RPCs, a fresh canonical staging index, the shared rate limiter, `requireStaging=1 -> 200`, and `requireExecution=1 -> 503`. Enable its schedule only after the real webhook test succeeds. Run pool discovery manually with the managed RPC, review the generated registry diff, and only then set `PERM_POOL_DISCOVERY_ENABLED=1`; scheduled discovery remains intentionally skipped while the RPC secret is absent.
 
 Then configure Vercel Production for the same non-release staging deployment:
 

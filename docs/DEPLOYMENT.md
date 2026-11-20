@@ -7,12 +7,19 @@
 - Explorer: `https://explorer.testnet.chain.robinhood.com`
 - Gas asset: testnet ETH
 
-The official manifest currently remains on Router v1:
+The official release manifest currently remains on Router v1:
 
 - Router: `0x3e350b79D4983a0e86Ad4eE25dB1DBBbfB55114d`
 - v4 adapter: `0xC4Df49493a828F681160056cb6D46143B56593D0`
 
-This is deliberate. The application can quote live routes, but signed multi-venue execution remains disabled until a v2 deployment completes this runbook. Local code, a browser deployment, or a candidate file must never be presented as the shared public release.
+A distinct Router-v2 deployment is live only as wallet-allowlisted, non-release staging:
+
+- Router: `0xFdC667735C8998fEB83C4c3c7B4eCFB404DAFA87`
+- v4 adapter: `0x9F05AA13b333d4FB780c8A343f4663de9C9c798c`
+- v3 adapter: `0x1D608E676b3bF506d15f4C9Ee0fAAa9aC87ce6Ba`
+- public record: `deployments/robinhood-testnet.v2-staging.json`
+
+All three staging contracts are source-verified exact matches on Blockscout. This publication does not promote them: the staging still uses a single-EOA governance boundary, local testnet burner signer, direct routes only, and `executionReady: false`. Only the explicit promotion flow in this runbook may replace the official manifest.
 
 ## Safety prerequisites
 
