@@ -126,6 +126,51 @@ executionReady: false
 
 A `200` from the staging check must never be presented as production release readiness.
 
+## 7. Add hosted staging operations without changing the release boundary
+
+Only after the canonical E2E gate is stable, add a managed primary chain-46630 RPC, keep the official public RPC as the independent fallback, and provision hosted PostgreSQL. Use the provider's direct PostgreSQL URL for schema migration/indexer jobs and its pooled URL for Vercel serverless traffic. Never commit either URL.
+
+The scheduled indexer supports an explicit staging target without changing `deployments/robinhood-testnet.json`. Configure these GitHub Actions variables:
+
+```dotenv
+PERM_INDEXER_ENABLED=0
+PERM_INDEXER_MODE=allowlisted-testnet-staging
+PERM_INDEXER_CHAIN_ID=46630
+PERM_INDEXER_ROUTER_ADDRESS=<staging Router v2>
+PERM_INDEXER_ROUTER_VERSION=2
+PERM_INDEXER_DEPLOYMENT_BLOCK=<staging deployment block>
+PERM_INDEXER_CONFIRM_NON_RELEASE=1
+PERM_MONITOR_ENABLED=0
+PERM_MONITOR_MODE=allowlisted-testnet-staging
+PERM_STAGING_URL=https://perm-iota.vercel.app
+```
+
+Configure these GitHub Actions secrets without printing them:
+
+```dotenv
+PERM_INDEXER_DATABASE_URL=<direct PostgreSQL URL>
+RH_TESTNET_RPC_URL=<managed chain-46630 HTTPS RPC>
+RH_TESTNET_FALLBACK_RPC_URL=https://rpc.testnet.chain.robinhood.com
+PERM_ALERT_WEBHOOK_URL=<HTTPS JSON webhook>
+```
+
+Run the indexer manually once while both `*_ENABLED` variables remain `0`. It applies the idempotent schema, backfills from the staging deployment block, stores a canonical block-hash cursor, and creates the shared PostgreSQL token bucket. Verify that the canonical E2E settlement is indexed, then enable the scheduled indexer. Run the staging monitor manually with `CONFIRM_ALERT_WEBHOOK_TEST=SEND_TEST_ALERT`; it requires both RPCs, a fresh canonical staging index, the shared rate limiter, `requireStaging=1 -> 200`, and `requireExecution=1 -> 503`. Enable its schedule only after the real webhook test succeeds.
+
+Then configure Vercel Production for the same non-release staging deployment:
+
+```dotenv
+RH_TESTNET_RPC_URL=<managed chain-46630 HTTPS RPC>
+RH_TESTNET_FALLBACK_RPC_URL=https://rpc.testnet.chain.robinhood.com
+PERM_INDEXER_DATABASE_URL=<pooled PostgreSQL URL>
+PERM_RATE_LIMIT_DATABASE_URL=<pooled PostgreSQL URL>
+PERM_ALERT_WEBHOOK_URL=<HTTPS JSON webhook>
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=<public project ID>
+PERM_REQUIRE_INDEXER=1
+PERM_REQUIRE_SHARED_RATE_LIMIT=1
+```
+
+Redeploy and verify PostgreSQL-backed history, RPC failover configuration, the WalletConnect option, staging health `200`, and release health `503`. Keep `NEXT_PUBLIC_PERM_EXECUTION_READY=0`, `PERM_STRICT_OPERATIONS=0`, the staging-local signer boundary, and `PERM_AGGREGATOR_HOOKS_JSON=[]`. Hosted operations improve staging reliability; they do not convert burner custody or direct pools into release or Aggregator Hook evidence.
+
 ## Disable or rotate staging
 
 To stop execution immediately, set `PERM_STAGING_ALLOW_BURNER_SIGNER=0`, remove the allowlist, or remove the staging-local key and redeploy. If a key may have leaked, pause the staging router, rotate the signer onchain, generate new testnet-only identities, and discard the old keys. Never promote staging evidence or burner identities into the official manifest.

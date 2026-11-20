@@ -5,15 +5,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const postgres = require("postgres");
 const { createPublicClient, decodeEventLog, defineChain, http, parseAbi } = require("viem");
+const { loadIndexerTarget } = require("./lib/indexer-target.cjs");
 
 const root = path.resolve(__dirname, "..");
-const manifestPath = process.env.PERM_MANIFEST_PATH
-  ? path.resolve(process.cwd(), process.env.PERM_MANIFEST_PATH)
-  : path.join(root, "deployments/robinhood-testnet.json");
-const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+const { manifest, mode: indexerMode } = loadIndexerTarget({ root });
 const databaseUrl = process.env.DATABASE_URL || process.env.PERM_INDEXER_DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL or PERM_INDEXER_DATABASE_URL is required");
-if (!manifest.permRouter || !manifest.deploymentBlock) throw new Error("Official router and deployment block are required");
+if (!manifest.permRouter || !manifest.deploymentBlock) throw new Error("Indexer router and deployment block are required");
 
 function boundedInteger(name, fallback, minimum, maximum) {
   const raw = process.env[name] || String(fallback);
@@ -175,6 +173,7 @@ async function syncOnce() {
 }
 
 async function main() {
+  console.log(`indexer target ${indexerMode}: chain ${manifest.chainId}, Router v${manifest.routerVersion}, ${manifest.permRouter}, deployment block ${manifest.deploymentBlock}`);
   await migrate();
   do {
     await syncOnce();

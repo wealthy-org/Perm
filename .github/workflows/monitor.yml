@@ -2,6 +2,12 @@ name: Testnet monitor
 
 on:
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: Send one explicit test notification to the configured webhook
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "*/15 * * * *"
 
@@ -10,6 +16,7 @@ permissions:
 
 jobs:
   deployment:
+    if: github.event_name == 'workflow_dispatch' || vars.PERM_MONITOR_ENABLED == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -23,16 +30,36 @@ jobs:
           node-version: 22.20.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Check official contracts, policy, governance, RPC and indexer
+      - name: Check configured deployment, RPCs, indexer and alerting
         env:
           RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
           RH_TESTNET_FALLBACK_RPC_URL: ${{ secrets.RH_TESTNET_FALLBACK_RPC_URL }}
           DATABASE_URL: ${{ secrets.PERM_INDEXER_DATABASE_URL }}
           PERM_ALERT_WEBHOOK_URL: ${{ secrets.PERM_ALERT_WEBHOOK_URL }}
-          PERM_STRICT_OPERATIONS: "1"
+          PERM_MONITOR_MODE: ${{ vars.PERM_MONITOR_MODE }}
+          PERM_STAGING_URL: ${{ vars.PERM_STAGING_URL }}
+          PERM_INDEXER_MODE: ${{ vars.PERM_INDEXER_MODE }}
+          PERM_INDEXER_CHAIN_ID: ${{ vars.PERM_INDEXER_CHAIN_ID }}
+          PERM_INDEXER_ROUTER_ADDRESS: ${{ vars.PERM_INDEXER_ROUTER_ADDRESS }}
+          PERM_INDEXER_ROUTER_VERSION: ${{ vars.PERM_INDEXER_ROUTER_VERSION }}
+          PERM_INDEXER_DEPLOYMENT_BLOCK: ${{ vars.PERM_INDEXER_DEPLOYMENT_BLOCK }}
+          PERM_INDEXER_CONFIRM_NON_RELEASE: ${{ vars.PERM_INDEXER_CONFIRM_NON_RELEASE }}
+          CONFIRM_ALERT_WEBHOOK_TEST: ${{ inputs.test_alert && 'SEND_TEST_ALERT' || '' }}
         run: |
           test -n "$RH_TESTNET_RPC_URL" || { echo "RH_TESTNET_RPC_URL is required"; exit 1; }
           test -n "$RH_TESTNET_FALLBACK_RPC_URL" || { echo "RH_TESTNET_FALLBACK_RPC_URL is required"; exit 1; }
           test -n "$DATABASE_URL" || { echo "PERM_INDEXER_DATABASE_URL is required"; exit 1; }
           test -n "$PERM_ALERT_WEBHOOK_URL" || { echo "PERM_ALERT_WEBHOOK_URL is required"; exit 1; }
-          pnpm monitor:testnet
+          case "$PERM_MONITOR_MODE" in
+            allowlisted-testnet-staging)
+              test -n "$PERM_STAGING_URL" || { echo "PERM_STAGING_URL is required"; exit 1; }
+              pnpm monitor:staging
+              ;;
+            official)
+              PERM_STRICT_OPERATIONS=1 pnpm monitor:testnet
+              ;;
+            *)
+              echo "PERM_MONITOR_MODE must be allowlisted-testnet-staging or official"
+              exit 1
+              ;;
+          esac
