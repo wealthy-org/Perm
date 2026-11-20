@@ -1,5 +1,15 @@
 export type RoutingToken = { address: string };
 export type RoutingStep = { amountOut: string };
+export type ProviderRoute = { routeKind: string; steps: readonly { providerId: string }[] };
+
+export function isExplicitV4V3Route(candidate: ProviderRoute): boolean {
+  const providers = new Set(candidate.steps.map((step) => step.providerId));
+  return candidate.routeKind === "cross-venue"
+    && candidate.steps.length === 2
+    && providers.size === 2
+    && providers.has("UNISWAP_V4_DIRECT")
+    && providers.has("SYNTHRA_V3");
+}
 
 type TwoStepOptions<TToken extends RoutingToken, TStep extends RoutingStep, TCandidate> = {
   tokens: readonly TToken[];

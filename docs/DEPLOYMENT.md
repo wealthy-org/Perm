@@ -49,7 +49,7 @@ corepack pnpm indexer:test-schema
 corepack pnpm build
 ```
 
-Current local contract checkpoint: 31 passing tests plus two fork suites skipped in the default run. Current coverage checkpoint: 86.80% statements, 55.75% branches, 89.47% functions and 85.98% lines (Router: 97.56% statements). The exact count can increase as regressions are added; any failure or material coverage regression blocks release.
+Current local contract checkpoint: 36 passing tests plus three opt-in fork suites skipped in the default run. Current coverage checkpoint: 89.12% statements, 56.49% branches, 89.47% functions and 88.79% lines (Router: 97.56% statements; dormant V2 adapter: 96.55%). The exact count can increase as regressions are added; any failure or material coverage regression blocks release.
 
 Exercise the migration on a disposable PostgreSQL database (the command is destructive and refuses an unlabelled database):
 
@@ -78,10 +78,11 @@ The fork suite executes:
 
 - real v4 native→token and token→native settlement;
 - real Synthra v3 native→TSLA and TSLA→native settlement;
-- an actual Permit2 EIP-712 signature transfer; and
+- an actual Permit2 EIP-712 signature transfer;
+- the dormant V2 adapter against its exact-source, codehash-pinned testnet pair; and
 - fee/rebate accounting through Router v2.
 
-The rehearsal deploys Router, both adapters, registers provider identities and runs post-deploy reads. Its manifest is ignored by Git.
+The V2 fork test proves compatibility only; `docs/V2_VENUE_REVIEW.md` withholds deployment and registration. The rehearsal deploys Router plus the admitted v4/v3 adapters, registers their provider identities and runs post-deploy reads. Its manifest is ignored by Git.
 
 ## 2. Prepare release identities
 

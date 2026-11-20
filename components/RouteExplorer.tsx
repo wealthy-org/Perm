@@ -8,9 +8,12 @@ import Footer from "./Footer";
 import LiveTokenMark from "./LiveTokenMark";
 import { LIVE_TOKENS, LIVE_TOKEN_MAP, type LiveTokenSymbol } from "@/lib/web3/tokens";
 import type { LiveQuote, LiveQuoteCandidate } from "@/lib/web3/quote";
-import { RH_TESTNET_EXPLORER, ZERO_ADDRESS } from "@/lib/web3/config";
+import { REVIEWED_V2_CLIENT_ENABLED, RH_TESTNET_EXPLORER, ZERO_ADDRESS } from "@/lib/web3/config";
 
-type Filter = "all" | "v4" | "v3" | "multi" | "hook";
+type Filter = "all" | "v4" | "v3" | "v2" | "multi" | "cross" | "hook";
+const FILTERS: Filter[] = REVIEWED_V2_CLIENT_ENABLED
+  ? ["all", "v4", "v3", "v2", "multi", "cross", "hook"]
+  : ["all", "v4", "v3", "multi", "cross", "hook"];
 
 export default function RouteExplorer() {
   const [filter, setFilter] = useState<Filter>("all");
@@ -46,7 +49,7 @@ export default function RouteExplorer() {
           tokenOut: buySymbol,
           amountIn: raw.toString(),
           slippageBps: 50,
-          routingMode: filter === "hook" ? "hooks" : filter === "v4" ? "v4" : filter === "v3" ? "v3" : "best",
+          routingMode: filter === "hook" ? "hooks" : filter === "v4" ? "v4" : filter === "v3" ? "v3" : filter === "v2" ? "v2" : filter === "cross" ? "mixed" : "best",
         }),
         cache: "no-store",
       });
@@ -69,7 +72,9 @@ export default function RouteExplorer() {
 
   const candidates = useMemo(() => (quote?.candidates || []).filter((candidate) => {
     if (filter === "v3") return candidate.steps.some((step) => step.providerId === "SYNTHRA_V3");
+    if (filter === "v2") return candidate.steps.some((step) => step.providerId === "REVIEWED_V2_THIRD_PARTY");
     if (filter === "multi") return candidate.steps.length > 1;
+    if (filter === "cross") return candidate.routeKind === "cross-venue";
     if (filter === "hook") return candidate.verifiedHook;
     if (filter === "v4") return candidate.steps.every((step) => step.providerId.startsWith("UNISWAP_V4"));
     return true;
@@ -95,7 +100,7 @@ export default function RouteExplorer() {
         <header className="data-hero">
           <span className="section-kicker">MULTI-VENUE ROUTE EXPLORER · CHAIN 46630</span>
           <h1>Compare the route, not the label.</h1>
-          <p>The same exact input is quoted across reviewed Uniswap v4 and Synthra v3 pools. Token-to-token paths may use two venue steps through ETH, and gas is normalized only when a valid conversion exists.</p>
+          <p>The same exact input is quoted across reviewed Uniswap v4 and Synthra v3 pools. Token-to-token paths may use two venue steps through ETH, and gas is normalized only when a valid conversion exists.{REVIEWED_V2_CLIENT_ENABLED ? " A separately gated third-party V2 path is also enabled." : " Third-party V2 remains withheld by the venue-admission gate."}</p>
           <div className="data-disclaimer"><i /> Hook candidates remain unavailable unless deployment, runtime codehash, pool and quote all verify onchain</div>
         </header>
 
@@ -115,7 +120,7 @@ export default function RouteExplorer() {
               <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Reading…" : "Refresh"}</button>
             </div>
             <div className="catalog-tabs" role="tablist" aria-label="Route type filter">
-              {(["all", "v4", "v3", "multi", "hook"] as Filter[]).map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "multi" ? "Multi-hop" : item === "hook" ? "Verified hooks" : item.toUpperCase()}</button>)}
+              {FILTERS.map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "multi" ? "Multi-hop" : item === "hook" ? "Verified hooks" : item.toUpperCase()}</button>)}
             </div>
           </header>
 

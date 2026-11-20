@@ -1,7 +1,7 @@
 import type { Address, Hex } from "viem";
 
 export type QuoteRouteStep = {
-  providerId: "UNISWAP_V4_DIRECT" | "UNISWAP_V4_AGGREGATOR_HOOK" | "SYNTHRA_V3";
+  providerId: "UNISWAP_V4_DIRECT" | "UNISWAP_V4_AGGREGATOR_HOOK" | "SYNTHRA_V3" | "REVIEWED_V2_THIRD_PARTY";
   providerLabel: string;
   adapter: Address;
   tokenIn: Address;
@@ -57,7 +57,7 @@ export type LiveQuote = {
   netFee: string;
   routedInput: string;
   slippageBps: number;
-  routingMode: "best" | "v4" | "v3" | "hooks";
+  routingMode: "best" | "v4" | "v3" | "v2" | "mixed" | "hooks";
   blockNumber: string;
   requestFingerprint: Hex;
   executable: boolean;

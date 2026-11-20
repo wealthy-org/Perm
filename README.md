@@ -206,7 +206,7 @@ Jangan mengganti `deployments/robinhood-testnet.json` secara manual. Alurnya:
 
 Lihat [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) untuk command dan rollback runbook lengkap.
 
-Untuk swap Router-v2 nyata sebelum infrastruktur release tersedia, gunakan hanya mode staging non-release yang dibatasi allowlist di [`docs/ALLOWLISTED_STAGING.md`](docs/ALLOWLISTED_STAGING.md). Mode itu tidak mengubah manifest resmi, tidak mengaktifkan Aggregator Hook, dan tidak memenuhi health gate produksi.
+Untuk swap Router-v2 nyata sebelum infrastruktur release tersedia, gunakan hanya mode staging non-release yang dibatasi allowlist di [`docs/ALLOWLISTED_STAGING.md`](docs/ALLOWLISTED_STAGING.md). Mode itu tidak mengubah manifest resmi, tidak mengaktifkan Aggregator Hook, dan tidak memenuhi health gate produksi. Status feature-by-feature terhadap gap analysis 20 Nov tercatat di [`docs/GAP_20NOV_CLOSURE.md`](docs/GAP_20NOV_CLOSURE.md). Pemetaan commit dan langkah pengujian lengkap tersedia di [`docs/FEATURE_COMMITS_AND_TESTING.md`](docs/FEATURE_COMMITS_AND_TESTING.md).
 
 Browser `/setup` dapat deploy stack development hanya ketika `NODE_ENV !== production`. Runtime code dibandingkan dengan template kompilasi setelah hanya compiler-declared immutable slots dinormalisasi; nilai immutable kemudian diperiksa lewat getter onchain.
 

@@ -4,7 +4,7 @@ This path exists only to make real Router-v2 swaps usable on Robinhood Chain tes
 
 The official `deployments/robinhood-testnet.json` manifest remains the release boundary. A staging deployment must keep `executionReady: false` and must never be promoted with `scripts/promote-deployment.cjs`.
 
-The current deployment's public, credential-free record is committed as `deployments/robinhood-testnet.v2-staging.json`. It publishes contract addresses, runtime codehashes, exact-match Blockscout source links, role concentration, direct-provider identities, and the canonical direct-v4 E2E transaction. It deliberately excludes private keys, wallet allowlists, signatures, database/RPC credentials, and webhook or WalletConnect configuration. Run `pnpm staging:test-public-manifest` after every update. The ignored `deployments/robinhood-testnet.staging.json` and `.staging/` files remain local operational artifacts and must never be staged.
+The current deployment's public, credential-free record is committed as `deployments/robinhood-testnet.v2-staging.json`. A feature-by-feature status and blocker map is maintained in `docs/GAP_20NOV_CLOSURE.md`. The manifest publishes contract addresses, runtime codehashes, exact-match Blockscout source links, role concentration, direct-provider identities, and canonical staging evidence. It deliberately excludes private keys, wallet allowlists, signatures, database/RPC credentials, and webhook or WalletConnect configuration. Run `pnpm staging:test-public-manifest` after every update. The ignored `deployments/robinhood-testnet.staging.json` and `.staging/` files remain local operational artifacts and must never be staged.
 
 ## Enforced boundary
 
@@ -14,6 +14,7 @@ The current deployment's public, credential-free record is committed as `deploym
 - A local burner quote key is accepted in a production-built staging runtime only when `PERM_QUOTE_SIGNER_MODE=staging-local` and `PERM_STAGING_ALLOW_BURNER_SIGNER=1` are both explicit.
 - Burner custody is always reported as `custodyReady: false` and can never satisfy `/api/health?requireExecution=1`.
 - Aggregator Hook mode is disabled. Staging accepts only the configured direct Uniswap-v4 and Synthra-v3 adapter identities, with the v4 hook-provider sentinel left at zero.
+- Third-party V2 admission is withheld. `docs/V2_VENUE_REVIEW.md` records exact-source and fork-test evidence, but no V2 adapter is deployed, registered, or exposed because provenance, recent activity, and meaningful liquidity are not established.
 - The UI execution button remains disabled until a canonical allowlisted E2E settlement is recorded and rechecked by `/api/health?requireStaging=1`.
 
 ## 1. Create fresh testnet-only identities
@@ -107,6 +108,31 @@ NEXT_PUBLIC_PERM_STAGING_E2E_PASSED=1
 ```
 
 Redeploy staging. The public flag enables the UI only after the E2E run; the server independently rechecks the transaction, allowlisted sender, canonical block, direct provider IDs, zero hook address, and minimum confirmations.
+
+### Additional non-release evidence suite
+
+The canonical bootstrap transaction above remains the health-gate anchor. Record additional deployment evidence without replacing that transaction:
+
+```sh
+set -a
+. .staging/keys.env
+set +a
+PERM_STAGING_URL=https://perm-iota.vercel.app \
+STAGING_EVIDENCE_SCENARIOS=v3,multiHop,crossVenue,permit2 \
+corepack pnpm staging:run-evidence
+```
+
+The runner obtains fresh quotes from the configured staging origin, enforces chain `46630`, the allowlisted account, deployed adapter addresses, approved direct-v4/v3 provider identities and zero hooks, then simulates and submits each transaction. HTTPS is mandatory by default; an explicit loopback-only HTTP guard exists for local non-release verification and must not be treated as hosted-service evidence. ERC-20 approvals are exact; the Permit2 case signs a one-transaction authorization. Results are written to ignored `.staging/e2e-suite.json`, while public transaction and receipt IDs may be copied to `deployments/robinhood-testnet.v2-staging.json`.
+
+Referral and claim evidence uses a separate testnet-only referrer identity and changes the Router staging referral registry. It therefore requires the explicit `CONFIRM_STAGING_ADMIN_EVIDENCE=I_UNDERSTAND_TESTNET_ONLY` guard. Never reuse that identity outside testnet. Independently recheck every published hash with:
+
+```sh
+corepack pnpm staging:verify-evidence
+```
+
+The public suite records direct v4, v3, token-to-token multi-hop, explicit v4→v3 cross-venue execution, Permit2, referral accrual, treasury claim and referral claim. The `crossVenue` scenario requests the explicit `mixed` routing mode and accepts only a two-step route containing both `UNISWAP_V4_DIRECT` and `SYNTHRA_V3`. Transaction `0x994b1b8ac83d8e3ae03d036c9d85cadc71e8b93e3144b8c6167d471716f77290` is published in the non-release manifest and independently rechecked by `staging:verify-evidence`. Its quote came from the explicit local-loopback staging path, so it proves canonical Router/adapters settlement but does not claim that the currently hosted build exposes `mixed` mode. WalletConnect remains a manual mobile pairing plus independent signed-attestation test. These staging transactions do not satisfy role separation, remote custody, Aggregator Hook, WalletConnect, assurance or official-release gates.
+
+For the manual mobile test, run `corepack pnpm staging:prepare-walletconnect` once to create ignored `.staging/walletconnect.json`. After a real Reown QR pairing, submit a Router-v2 swap from a wallet that is independent of every staging role; fill the public metadata, transaction hash, receipt ID, and **only a one-way hash** of the session topic. Run the prepare command again to print the exact QA attestation message. An independent QA signer must personal-sign that message. Configure only that public signer address in `STAGING_WALLETCONNECT_QA_SIGNERS`, then run `corepack pnpm staging:verify-walletconnect`. The verifier fails closed on stale/non-canonical transactions, wrong Router/account, receipt mismatch, an untrusted or operational-role signer, signature mutation, or a raw `sessionTopic` field. Do not commit the local evidence file, the session topic, or any Reown credential.
 
 ## 6. Verify the two independent health boundaries
 

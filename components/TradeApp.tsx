@@ -19,6 +19,7 @@ import { useWeb3 } from "./Web3Provider";
 import { erc20Abi, permRouterAbi } from "@/lib/web3/abis";
 import {
   PERMIT2_ADDRESS,
+  REVIEWED_V2_CLIENT_ENABLED,
   RH_TESTNET_CHAIN_ID,
   RH_TESTNET_EXPLORER,
   ZERO_ADDRESS,
@@ -35,7 +36,7 @@ import { usePermDeployment } from "@/lib/web3/local-deployment";
 
 type PickerSide = "sell" | "buy" | null;
 type TxStage = "idle" | "approving" | "signing" | "simulating" | "submitting" | "confirming" | "success" | "error";
-type RoutingMode = "best" | "v4" | "v3" | "hooks";
+type RoutingMode = "best" | "v4" | "v3" | "v2" | "mixed" | "hooks";
 
 type TxStatus = {
   stage: TxStage;
@@ -437,6 +438,8 @@ export default function TradeApp() {
               <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Best net result</button>
               <button type="button" className={routingMode === "v4" ? "active" : ""} onClick={() => setRoutingMode("v4")}>V4 only</button>
               <button type="button" className={routingMode === "v3" ? "active" : ""} onClick={() => setRoutingMode("v3")}>Synthra v3</button>
+              {REVIEWED_V2_CLIENT_ENABLED && <button type="button" className={routingMode === "v2" ? "active" : ""} onClick={() => setRoutingMode("v2")}>Reviewed V2</button>}
+              <button type="button" className={routingMode === "mixed" ? "active" : ""} onClick={() => setRoutingMode("mixed")}>V4 ↔ V3</button>
               <button type="button" disabled={deployment.allowlistedStaging} className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Verified hooks</button>
             </div>
             <div className="mode-warning">{deployment.allowlistedStaging
@@ -499,7 +502,7 @@ export default function TradeApp() {
             <div className="route-list">
               {quote?.candidates.map((route, index) => <article className={`candidate${index === 0 ? " selected" : ""}`} key={route.routeId} style={{ "--row-delay": `${index * 60}ms` } as CSSProperties}>
                 <div className="candidate-rank">{index === 0 ? "✓" : index + 1}</div>
-                <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">{route.routeKind.toUpperCase()}</span></div><p>{route.hook === ZERO_ADDRESS ? `${route.steps.length} verified step${route.steps.length > 1 ? "s" : ""} · no hook claim` : route.verifiedHook ? "Onchain codehash-verified hook" : "Hook unavailable"}</p><div className="route-path">{route.steps.map((step, stepIndex) => <span key={`${route.routeId}-${stepIndex}`}><em>{step.providerId === "SYNTHRA_V3" ? "V3" : "V4"} · {step.poolFee / 10_000}%</em>{stepIndex < route.steps.length - 1 && <i />}</span>)}</div></div>
+                <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">{route.routeKind.toUpperCase()}</span></div><p>{route.hook === ZERO_ADDRESS ? `${route.steps.length} verified step${route.steps.length > 1 ? "s" : ""} · no hook claim` : route.verifiedHook ? "Onchain codehash-verified hook" : "Hook unavailable"}</p><div className="route-path">{route.steps.map((step, stepIndex) => <span key={`${route.routeId}-${stepIndex}`}><em>{step.providerId === "SYNTHRA_V3" ? "V3" : step.providerId === "REVIEWED_V2_THIRD_PARTY" ? "V2" : "V4"} · {step.poolFee / 10_000}%</em>{stepIndex < route.steps.length - 1 && <i />}</span>)}</div></div>
                 <div className="candidate-output"><b>{formatTokenAmount(route.amountOut, buyToken)}</b><span>{buyToken.displaySymbol}</span><small>{Number(formatEther(BigInt(route.estimatedNetworkFeeWei))).toPrecision(3)} ETH gas</small></div>
               </article>)}
               {!quote && <div className="route-empty">{quoteLoading ? "Reading verified onchain quoters…" : quoteError || "Enter an amount to compare routes."}</div>}

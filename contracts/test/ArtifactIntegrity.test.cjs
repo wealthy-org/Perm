@@ -6,6 +6,7 @@ const exported = {
   PermRouter: require("../../lib/web3/artifacts/PermRouter.json"),
   PermV4Adapter: require("../../lib/web3/artifacts/PermV4Adapter.json"),
   PermV3Adapter: require("../../lib/web3/artifacts/PermV3Adapter.json"),
+  PermV2Adapter: require("../../lib/web3/artifacts/PermV2Adapter.json"),
   PermTimelock: require("../../lib/web3/artifacts/PermTimelock.json"),
 };
 
@@ -39,12 +40,25 @@ async function expectRuntime(contract, artifact) {
     const weth = await Weth.deploy();
     const V3 = await ethers.getContractFactory("PermV3Adapter");
     const v3 = await V3.deploy(owner.address, await router.getAddress(), await swapRouter.getAddress(), await weth.getAddress());
+    const V2Factory = await ethers.getContractFactory("MockV2Factory");
+    const v2Factory = await V2Factory.deploy();
+    await v2Factory.createPair(await weth.getAddress(), await permit2.getAddress());
+    const v2Pair = await v2Factory.getPair(await weth.getAddress(), await permit2.getAddress());
+    const V2 = await ethers.getContractFactory("PermV2Adapter");
+    const v2 = await V2.deploy(
+      owner.address,
+      await router.getAddress(),
+      await v2Factory.getAddress(),
+      await weth.getAddress(),
+      ethers.keccak256(await ethers.provider.getCode(v2Pair)),
+    );
     const Timelock = await ethers.getContractFactory("PermTimelock");
     const timelock = await Timelock.deploy(60, [owner.address], [ethers.ZeroAddress], ethers.ZeroAddress);
 
     await expectRuntime(router, exported.PermRouter);
     await expectRuntime(v4, exported.PermV4Adapter);
     await expectRuntime(v3, exported.PermV3Adapter);
+    await expectRuntime(v2, exported.PermV2Adapter);
     await expectRuntime(timelock, exported.PermTimelock);
   });
 });

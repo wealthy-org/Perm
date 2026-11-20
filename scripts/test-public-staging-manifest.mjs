@@ -27,11 +27,12 @@ const topLevelKeys = [
   "roles",
   "routerVersion",
   "schemaVersion",
+  "stagingEvidenceSuite",
   "stagingUrl",
 ].sort();
 assert.deepEqual(Object.keys(manifest).sort(), topLevelKeys, "public staging manifest schema drifted");
 
-assert.equal(manifest.schemaVersion, 1);
+assert.equal(manifest.schemaVersion, 2);
 assert.equal(manifest.environment, "allowlisted-testnet-staging");
 assert.equal(manifest.releaseStatus, "non-release");
 assert.equal(manifest.nonRelease, true);
@@ -86,6 +87,7 @@ assert.equal(getAddress(manifest.providers.synthraV3.adapter), getAddress(manife
 
 assert.deepEqual(manifest.feePolicy, { version: 1, platformFeeBps: 20, rebateShareBps: 2500 });
 assert.match(manifest.canonicalStagingEvidence.transactionHash, /^0x[0-9a-f]{64}$/);
+assert.match(manifest.canonicalStagingEvidence.receiptId, /^0x[0-9a-f]{64}$/);
 assert.equal(manifest.canonicalStagingEvidence.routeClassification, "uniswap-v4-direct-no-hook");
 assert.equal(manifest.canonicalStagingEvidence.status, "passed-staging-only");
 const evidenceUrl = new URL(manifest.canonicalStagingEvidence.explorerUrl);
@@ -93,12 +95,45 @@ assert.equal(evidenceUrl.protocol, "https:");
 assert.equal(evidenceUrl.hostname, "explorer.testnet.chain.robinhood.com");
 assert.ok(evidenceUrl.pathname.toLowerCase().endsWith(manifest.canonicalStagingEvidence.transactionHash.toLowerCase()));
 
+const suite = manifest.stagingEvidenceSuite;
+assert.equal(suite.status, "eight-of-nine-staging-scenarios-recorded");
+assert.equal(suite.nonRelease, true);
+assert.ok(isAddress(suite.account));
+assert.ok(isAddress(suite.referrer));
+assert.notEqual(getAddress(suite.account), getAddress(suite.referrer));
+const scenarioClassifications = {
+  v3: "synthra-v3",
+  multiHop: "token-to-token-two-step",
+  crossVenue: "uniswap-v4-to-synthra-v3-two-step",
+  permit2: "permit2-signature-transfer",
+  referral: "referral-fee-accrual",
+  treasuryClaim: "native-treasury-fee-claim",
+  referralClaim: "native-referral-fee-claim",
+};
+assert.deepEqual(Object.keys(suite.scenarios).sort(), Object.keys(scenarioClassifications).sort());
+const settlementScenarios = new Set(["v3", "multiHop", "crossVenue", "permit2", "referral"]);
+for (const [name, classification] of Object.entries(scenarioClassifications)) {
+  const item = suite.scenarios[name];
+  assert.match(item.transactionHash, /^0x[0-9a-f]{64}$/);
+  assert.equal(item.routeClassification, classification);
+  assert.equal(item.status, "passed-staging-only");
+  if (settlementScenarios.has(name)) assert.match(item.receiptId, /^0x[0-9a-f]{64}$/);
+  else assert.equal("receiptId" in item, false);
+  const url = new URL(item.explorerUrl);
+  assert.equal(url.protocol, "https:");
+  assert.equal(url.hostname, "explorer.testnet.chain.robinhood.com");
+  assert.ok(url.pathname.toLowerCase().endsWith(item.transactionHash.toLowerCase()));
+}
+assert.equal(new Set(Object.values(suite.scenarios).map((item) => item.transactionHash)).size, 7);
+assert.deepEqual(suite.walletConnect, { status: "pending-manual-mobile-pairing-and-independent-attestation" });
+
 assert.equal(manifest.deploymentTransactions.length, 5);
 assert.equal(new Set(manifest.deploymentTransactions).size, manifest.deploymentTransactions.length);
 for (const hash of manifest.deploymentTransactions) assert.match(hash, /^0x[0-9a-f]{64}$/);
 assert.deepEqual(manifest.boundaries, {
   walletAllowlistRequired: true,
   aggregatorHooksEnabled: false,
+  reviewedThirdPartyV2Enabled: false,
   remoteSignerCustodyReady: false,
   hostedOperationsReady: false,
   releaseEvidenceComplete: false,

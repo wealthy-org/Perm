@@ -28,9 +28,13 @@ export const PERMIT2_ADDRESS = deployment.permit2 as Address;
 const envRouter = process.env.NEXT_PUBLIC_PERM_ROUTER_ADDRESS;
 const envV4Adapter = process.env.NEXT_PUBLIC_PERM_V4_ADAPTER_ADDRESS;
 const envV3Adapter = process.env.NEXT_PUBLIC_PERM_V3_ADAPTER_ADDRESS;
+const envV2Adapter = process.env.NEXT_PUBLIC_PERM_V2_ADAPTER_ADDRESS;
 export const PERM_ROUTER_ADDRESS = (envRouter || deployment.permRouter || undefined) as Address | undefined;
 export const PERM_V4_ADAPTER_ADDRESS = (envV4Adapter || deployment.v4Adapter || undefined) as Address | undefined;
 export const PERM_V3_ADAPTER_ADDRESS = (envV3Adapter || deployment.v3Adapter || undefined) as Address | undefined;
+export const PERM_V2_ADAPTER_ADDRESS = (envV2Adapter || undefined) as Address | undefined;
+if (envV2Adapter && !isAddress(envV2Adapter)) throw new Error("NEXT_PUBLIC_PERM_V2_ADAPTER_ADDRESS must be an address");
+export const REVIEWED_V2_STAGING_ENABLED = process.env.PERM_STAGING_ALLOW_REVIEWED_V2 === "1";
 export const ROUTER_VERSION = Number(process.env.NEXT_PUBLIC_PERM_ROUTER_VERSION || deployment.routerVersion || 1);
 const deploymentBlockOverride = process.env.NEXT_PUBLIC_PERM_DEPLOYMENT_BLOCK;
 if (deploymentBlockOverride && !/^\d+$/.test(deploymentBlockOverride)) throw new Error("NEXT_PUBLIC_PERM_DEPLOYMENT_BLOCK must be an integer");
@@ -38,6 +42,9 @@ export const DEPLOYMENT_BLOCK = deploymentBlockOverride ? Number(deploymentBlock
 if (DEPLOYMENT_BLOCK !== null && (!Number.isSafeInteger(DEPLOYMENT_BLOCK) || DEPLOYMENT_BLOCK < 0)) throw new Error("Deployment block is invalid");
 
 export const ALLOWLISTED_STAGING_BUILD = process.env.NEXT_PUBLIC_PERM_EXECUTION_MODE === ALLOWLISTED_STAGING_MODE;
+export const REVIEWED_V2_CLIENT_ENABLED = ALLOWLISTED_STAGING_BUILD
+  && process.env.NEXT_PUBLIC_PERM_STAGING_ALLOW_REVIEWED_V2 === "1"
+  && Boolean(PERM_V2_ADAPTER_ADDRESS);
 const stagingAddressesValid = Boolean(
   envRouter && isAddress(envRouter)
     && envV4Adapter && isAddress(envV4Adapter)
@@ -92,6 +99,19 @@ export const SYNTHRA_V3 = {
   quoterV2: deployment.venues.synthraV3.quoterV2 as Address,
   quoterShim: deployment.venues.synthraV3.quoterShim as Address,
   weth: deployment.venues.synthraV3.weth as Address,
+} as const;
+
+// Third-party testnet deployment whose factory sources exactly match Uniswap/v2-core.
+// It is opt-in, codehash-pinned and never represented as an official Uniswap deployment.
+export const REVIEWED_V2 = {
+  factory: "0x6C4cA684D84761E193cB23d62b22fA83bB35E54E" as Address,
+  factoryCodehash: "0xbab145d02e7005f0d84c6c1639d39b799b0ea16df99ebbdaf5a14d9da820b4e0" as const,
+  weth: SYNTHRA_V3.weth,
+  wethCodehash: "0x55f8ac53c64450f01880d8249fc5cb0c69c064e4bcb097ea80a02fff40485a7c" as const,
+  pairCodehash: "0x5b83bdbcc56b2e630f2807bbadd2b0c21619108066b92a58de081261089e9ce5" as const,
+  feeNumerator: 997n,
+  feeDenominator: 1_000n,
+  stepGasEstimate: 115_000n,
 } as const;
 
 export function createRobinhoodPublicClient() {

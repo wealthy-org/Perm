@@ -2,9 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { decodeEventLog, keccak256, toHex } from "viem";
 import {
   PERM_ROUTER_ADDRESS,
+  PERM_V2_ADAPTER_ADDRESS,
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
   RELEASE_DEPLOYMENT_READY,
+  REVIEWED_V2_STAGING_ENABLED,
   RH_TESTNET_FALLBACK_RPC,
   ROUTER_VERSION,
   STAGING_DEPLOYMENT_CONFIGURED,
@@ -23,6 +25,7 @@ export const runtime = "nodejs";
 
 const DIRECT_V4_PROVIDER = keccak256(toHex("UNISWAP_V4_DIRECT"));
 const SYNTHRA_V3_PROVIDER = keccak256(toHex("SYNTHRA_V3"));
+const REVIEWED_V2_PROVIDER = keccak256(toHex("REVIEWED_V2_THIRD_PARTY"));
 
 function aggregatorHooksDisabled() {
   const raw = process.env.PERM_AGGREGATOR_HOOKS_JSON;
@@ -87,11 +90,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     routerV2Configured: ROUTER_VERSION >= 2 && Boolean(PERM_ROUTER_ADDRESS),
     v4AdapterConfigured: Boolean(PERM_V4_ADAPTER_ADDRESS),
     v3AdapterConfigured: Boolean(PERM_V3_ADAPTER_ADDRESS),
+    reviewedV2Requested: REVIEWED_V2_STAGING_ENABLED,
+    v2AdapterConfigured: Boolean(PERM_V2_ADAPTER_ADDRESS),
     routerCodePresent: false,
     v4AdapterCodePresent: false,
     v3AdapterCodePresent: false,
+    v2AdapterCodePresent: false,
     directV4AdapterEnabled: false,
     directV3AdapterEnabled: false,
+    directV2AdapterEnabled: false,
     aggregatorHookProviderDisabled: false,
     aggregatorHookConfigurationDisabled: aggregatorHooksDisabled(),
     localBurnerSignerExplicitlyAllowed: staging.localBurnerSignerAllowed,
@@ -137,6 +144,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         stagingChecks.v3AdapterCodePresent = Boolean(v3Code && v3Code !== "0x");
         stagingChecks.directV3AdapterEnabled = v3Config[0] && v3Config[1].toLowerCase() === SYNTHRA_V3_PROVIDER.toLowerCase();
       }
+      if (REVIEWED_V2_STAGING_ENABLED && PERM_V2_ADAPTER_ADDRESS) {
+        const v2Code = await client.getCode({ address: PERM_V2_ADAPTER_ADDRESS });
+        const v2Config = await client.readContract({ address: PERM_ROUTER_ADDRESS, abi: permRouterAbi, functionName: "adapters", args: [PERM_V2_ADAPTER_ADDRESS] });
+        stagingChecks.v2AdapterCodePresent = Boolean(v2Code && v2Code !== "0x");
+        stagingChecks.directV2AdapterEnabled = v2Config[0] && v2Config[1].toLowerCase() === REVIEWED_V2_PROVIDER.toLowerCase();
+      }
       if (configuredSigner) {
         checks.quoteSignerMatchesOnchain = onchainSigner.toLowerCase() === configuredSigner.toLowerCase();
         stagingChecks.quoteSignerMatchesOnchain = checks.quoteSignerMatchesOnchain;
@@ -180,7 +193,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           if (decoded.eventName === "RouteStepSettled") {
             directSteps += 1;
             const directProvider = decoded.args.providerId.toLowerCase() === DIRECT_V4_PROVIDER.toLowerCase()
-              || decoded.args.providerId.toLowerCase() === SYNTHRA_V3_PROVIDER.toLowerCase();
+              || decoded.args.providerId.toLowerCase() === SYNTHRA_V3_PROVIDER.toLowerCase()
+              || (REVIEWED_V2_STAGING_ENABLED && decoded.args.providerId.toLowerCase() === REVIEWED_V2_PROVIDER.toLowerCase());
             if (!directProvider || decoded.args.hook.toLowerCase() !== ZERO_ADDRESS) forbiddenStep = true;
           }
         } catch {
@@ -230,6 +244,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       && stagingChecks.v3AdapterCodePresent
       && stagingChecks.directV4AdapterEnabled
       && stagingChecks.directV3AdapterEnabled
+      && (!stagingChecks.reviewedV2Requested || (
+        stagingChecks.v2AdapterConfigured
+          && stagingChecks.v2AdapterCodePresent
+          && stagingChecks.directV2AdapterEnabled
+      ))
       && stagingChecks.aggregatorHookProviderDisabled
       && stagingChecks.aggregatorHookConfigurationDisabled
       && stagingChecks.quoteSignerConfigured

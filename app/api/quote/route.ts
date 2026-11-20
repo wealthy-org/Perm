@@ -16,8 +16,11 @@ import {
   RELEASE_DEPLOYMENT_READY,
   STAGING_DEPLOYMENT_CONFIGURED,
   PERM_ROUTER_ADDRESS,
+  PERM_V2_ADAPTER_ADDRESS,
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
+  REVIEWED_V2,
+  REVIEWED_V2_STAGING_ENABLED,
   RH_TESTNET_CHAIN_ID,
   ROUTER_VERSION,
   SYNTHRA_V3,
@@ -25,9 +28,18 @@ import {
   ZERO_ADDRESS,
   createRobinhoodPublicClient,
 } from "@/lib/web3/config";
-import { erc20Abi, permRouterAbi, permV4AdapterAbi, v3FactoryAbi, v3QuoterAbi, v4QuoterAbi } from "@/lib/web3/abis";
+import {
+  erc20Abi,
+  permRouterAbi,
+  permV4AdapterAbi,
+  v2FactoryAbi,
+  v2PairAbi,
+  v3FactoryAbi,
+  v3QuoterAbi,
+  v4QuoterAbi,
+} from "@/lib/web3/abis";
 import { tokenPairPools, type V4PoolFixture } from "@/lib/server/pools";
-import { discoverTwoStepRoutes } from "@/lib/server/route-planner";
+import { discoverTwoStepRoutes, isExplicitV4V3Route } from "@/lib/server/route-planner";
 import { LIVE_TOKEN_MAP, LIVE_TOKENS, type LiveToken, type LiveTokenSymbol } from "@/lib/web3/tokens";
 import type { LiveQuote, LiveQuoteCandidate, QuoteRouteStep } from "@/lib/web3/quote";
 import { RequestBodyTooLargeError, consumeRateLimit, readJsonBody, requestIdentity, safeServerError, ttlCached } from "@/lib/server/runtime";
@@ -42,7 +54,7 @@ const MAX_INT128 = (1n << 127n) - 1n;
 const MAX_QUOTED_GAS = 30_000_000n;
 const V3_FEES = [100, 500, 3_000, 10_000] as const;
 const ROUTE_STEP_PARAMETERS = parseAbiParameters("(address adapter,address tokenIn,address tokenOut,bytes data)[]");
-type RoutingMode = "best" | "v4" | "v3" | "hooks";
+type RoutingMode = "best" | "v4" | "v3" | "v2" | "mixed" | "hooks";
 type QuoteBody = {
   tokenIn?: string;
   tokenOut?: string;
@@ -137,8 +149,8 @@ export async function POST(request: NextRequest) {
   const tokenIn = LIVE_TOKEN_MAP[body.tokenIn as LiveTokenSymbol];
   const tokenOut = LIVE_TOKEN_MAP[body.tokenOut as LiveTokenSymbol];
   if (!tokenIn || !tokenOut || tokenIn.symbol === tokenOut.symbol) return error("Unsupported token pair");
-  if (body.routingMode && !["best", "v4", "v3", "hooks"].includes(body.routingMode)) return error("Unsupported routing mode");
-  const routingMode: RoutingMode = body.routingMode === "v4" || body.routingMode === "v3" || body.routingMode === "hooks" ? body.routingMode : "best";
+  if (body.routingMode && !["best", "v4", "v3", "v2", "mixed", "hooks"].includes(body.routingMode)) return error("Unsupported routing mode");
+  const routingMode: RoutingMode = body.routingMode === "v4" || body.routingMode === "v3" || body.routingMode === "v2" || body.routingMode === "mixed" || body.routingMode === "hooks" ? body.routingMode : "best";
 
   const requestedAddresses = [body.account, body.recipient, body.referrer].filter((value): value is string => value !== undefined);
   if (requestedAddresses.some((address) => !isAddress(address))) return error("Quote binding contains an invalid address");
@@ -150,7 +162,10 @@ export async function POST(request: NextRequest) {
   const staging = allowlistedStagingConfiguration();
   const stagingRequested = ALLOWLISTED_STAGING_BUILD || staging.requested;
   if (stagingRequested && routingMode === "hooks") {
-    return error("Aggregator Hook routing is disabled in allowlisted staging; use a verified direct v4 or Synthra v3 route", 422);
+    return error("Aggregator Hook routing is disabled in allowlisted staging; use a reviewed direct v4 or Synthra v3 route", 422);
+  }
+  if (routingMode === "v2" && (!stagingRequested || !REVIEWED_V2_STAGING_ENABLED || !PERM_V2_ADAPTER_ADDRESS)) {
+    return error("Third-party V2 routing is withheld pending provenance, activity and liquidity admission gates", 422);
   }
   if (stagingRequested && account !== ZERO_ADDRESS) {
     if (!staging.configured) return error(staging.reason || "Allowlisted staging is not configured", 503);
@@ -341,6 +356,81 @@ export async function POST(request: NextRequest) {
       };
     };
 
+    const quoteV2Raw = async (input: LiveToken, output: LiveToken, amount: bigint): Promise<RawQuote & { pair: Address }> => {
+      const actualIn = input.address === ZERO_ADDRESS ? REVIEWED_V2.weth : input.address;
+      const actualOut = output.address === ZERO_ADDRESS ? REVIEWED_V2.weth : output.address;
+      if (actualIn.toLowerCase() === actualOut.toLowerCase()) throw new Error("Invalid V2 pair");
+      return ttlCached(`v2quote:${actualIn}:${actualOut}:${amount}`, 2_000, async () => {
+        await ttlCached("v2dependencies", 10_000, async () => {
+          const [factoryCode, wethCode] = await Promise.all([
+            client.getCode({ address: REVIEWED_V2.factory }),
+            client.getCode({ address: REVIEWED_V2.weth }),
+          ]);
+          if (!factoryCode || keccak256(factoryCode).toLowerCase() !== REVIEWED_V2.factoryCodehash.toLowerCase()) throw new Error("V2 factory codehash mismatch");
+          if (!wethCode || keccak256(wethCode).toLowerCase() !== REVIEWED_V2.wethCodehash.toLowerCase()) throw new Error("V2 WETH codehash mismatch");
+          return true;
+        });
+        const pair = await client.readContract({
+          address: REVIEWED_V2.factory,
+          abi: v2FactoryAbi,
+          functionName: "getPair",
+          args: [actualIn, actualOut],
+        });
+        if (pair === ZERO_ADDRESS) throw new Error("No reviewed V2 pair");
+        const [code, venueFactory, token0, token1, reserves] = await Promise.all([
+          client.getCode({ address: pair }),
+          client.readContract({ address: pair, abi: v2PairAbi, functionName: "factory" }),
+          client.readContract({ address: pair, abi: v2PairAbi, functionName: "token0" }),
+          client.readContract({ address: pair, abi: v2PairAbi, functionName: "token1" }),
+          client.readContract({ address: pair, abi: v2PairAbi, functionName: "getReserves" }),
+        ]);
+        if (!code || keccak256(code).toLowerCase() !== REVIEWED_V2.pairCodehash.toLowerCase()) throw new Error("V2 pair codehash mismatch");
+        if (venueFactory.toLowerCase() !== REVIEWED_V2.factory.toLowerCase()) throw new Error("V2 pair factory mismatch");
+        const forward = token0.toLowerCase() === actualIn.toLowerCase() && token1.toLowerCase() === actualOut.toLowerCase();
+        const reverse = token1.toLowerCase() === actualIn.toLowerCase() && token0.toLowerCase() === actualOut.toLowerCase();
+        if (!forward && !reverse) throw new Error("V2 pair token mismatch");
+        const [balance0, balance1] = await Promise.all([
+          client.readContract({ address: token0, abi: erc20Abi, functionName: "balanceOf", args: [pair] }),
+          client.readContract({ address: token1, abi: erc20Abi, functionName: "balanceOf", args: [pair] }),
+        ]);
+        if (balance0 !== reserves[0] || balance1 !== reserves[1]) throw new Error("V2 pair balances differ from reserves");
+        const reserveIn = forward ? reserves[0] : reserves[1];
+        const reserveOut = forward ? reserves[1] : reserves[0];
+        if (reserveIn <= 0n || reserveOut <= 0n) throw new Error("Empty V2 reserves");
+        const amountInWithFee = amount * REVIEWED_V2.feeNumerator;
+        const amountOut = amountInWithFee * reserveOut
+          / (reserveIn * REVIEWED_V2.feeDenominator + amountInWithFee);
+        if (amountOut <= 0n || amountOut >= reserveOut) throw new Error("Empty V2 quote");
+        return { amountOut, gasEstimate: REVIEWED_V2.stepGasEstimate, pair };
+      });
+    };
+
+    const v2Step = async (input: LiveToken, output: LiveToken, amount: bigint): Promise<InternalStep | null> => {
+      if (!stagingRequested || !REVIEWED_V2_STAGING_ENABLED || !PERM_V2_ADAPTER_ADDRESS) return null;
+      const raw = await quoteV2Raw(input, output, amount);
+      const data = encodeAbiParameters(parseAbiParameters("address"), [raw.pair]);
+      const actualIn = input.address === ZERO_ADDRESS ? REVIEWED_V2.weth : input.address;
+      const actualOut = output.address === ZERO_ADDRESS ? REVIEWED_V2.weth : output.address;
+      return {
+        providerId: "REVIEWED_V2_THIRD_PARTY",
+        providerLabel: "Source-reviewed third-party V2 pool",
+        adapter: PERM_V2_ADAPTER_ADDRESS,
+        tokenIn: input.address,
+        tokenOut: output.address,
+        amountIn: amount.toString(),
+        amountOut: raw.amountOut.toString(),
+        gasEstimate: raw.gasEstimate.toString(),
+        poolId: keccak256(encodeAbiParameters(parseAbiParameters("address,address,address,address"), [
+          REVIEWED_V2.factory, raw.pair, actualIn, actualOut,
+        ])),
+        poolFee: 3_000,
+        hook: ZERO_ADDRESS,
+        verifiedHook: false,
+        data,
+        requote: async (nextAmount) => quoteV2Raw(input, output, nextAmount),
+      };
+    };
+
     const bestGasConversionStep = async (output: LiveToken, amount: bigint): Promise<InternalStep | undefined> => {
       if (output.address === ZERO_ADDRESS) return undefined;
       const tasks: Array<() => Promise<InternalStep | null>> = [];
@@ -348,6 +438,7 @@ export async function POST(request: NextRequest) {
         tasks.push(() => v4Step(LIVE_TOKEN_MAP.ETH, output, amount, pool).catch(() => null));
       }
       for (const fee of V3_FEES) tasks.push(() => v3Step(LIVE_TOKEN_MAP.ETH, output, amount, fee).catch(() => null));
+      tasks.push(() => v2Step(LIVE_TOKEN_MAP.ETH, output, amount).catch(() => null));
       return (await runLimited(tasks)).filter((step): step is InternalStep => step !== null)
         .sort((a, b) => BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : BigInt(b.amountOut) < BigInt(a.amountOut) ? -1 : 0)[0];
     };
@@ -360,11 +451,14 @@ export async function POST(request: NextRequest) {
           || (b === input.address.toLowerCase() && a === output.address.toLowerCase());
       })];
       const tasks: Array<() => Promise<InternalStep | null>> = [];
-      if (routingMode === "best" || routingMode === "v4") {
+      if (routingMode === "best" || routingMode === "v4" || routingMode === "mixed") {
         for (const pool of pools.filter((item) => item.sourceType === "direct").slice(0, 64)) tasks.push(() => v4Step(input, output, amount, pool).catch(() => null));
       }
-      if (routingMode === "best" || routingMode === "v3") {
+      if (routingMode === "best" || routingMode === "v3" || routingMode === "mixed") {
         for (const fee of V3_FEES) tasks.push(() => v3Step(input, output, amount, fee).catch(() => null));
+      }
+      if (routingMode === "best" || routingMode === "v2") {
+        tasks.push(() => v2Step(input, output, amount).catch(() => null));
       }
       if (!stagingRequested && (routingMode === "best" || routingMode === "v4" || routingMode === "hooks")) {
         for (const pool of pools.filter((item) => item.sourceType === "aggregator-hook").slice(0, 16)) tasks.push(() => v4Step(input, output, amount, pool).catch(() => null));
@@ -446,7 +540,10 @@ export async function POST(request: NextRequest) {
     });
 
     const internalCandidates = [...await Promise.all(candidatePromises), ...twoStepCandidates];
-    const deduped = [...new Map(internalCandidates
+    const modeCandidates = routingMode === "mixed"
+      ? internalCandidates.filter(isExplicitV4V3Route)
+      : internalCandidates;
+    const deduped = [...new Map(modeCandidates
       .filter((candidate) => BigInt(candidate.gasEstimate) > 0n && BigInt(candidate.gasEstimate) <= MAX_QUOTED_GAS)
       .map((candidate) => [candidate.routeId, candidate])).values()]
       .sort((a, b) => {
@@ -459,7 +556,9 @@ export async function POST(request: NextRequest) {
     if (!deduped.length) {
       return error(routingMode === "hooks"
         ? "No verified Aggregator Hook candidate is configured and executable on this testnet"
-        : "No executable route is available for this pair", 422);
+        : routingMode === "mixed"
+          ? "No executable v4-to-v3 or v3-to-v4 route is available for this pair"
+          : "No executable route is available for this pair", 422);
     }
 
     const selectedInternal = deduped[0];

@@ -1,9 +1,9 @@
 {
   "chainId": 46630,
   "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
-  "generatedAt": "2026-11-18T13:42:59.146Z",
+  "generatedAt": "2026-11-20T17:54:27.218Z",
   "fromBlock": 121317900,
-  "toBlock": 155000635,
+  "toBlock": 155962684,
   "pools": [
     {
       "id": "0xad46061426962ce3cdd72f85d73d5b904c2f76136162be56dc8e63e843848142",
@@ -15272,6 +15272,83 @@
       "hookData": "0x",
       "sourceType": "direct",
       "initializationBlock": 154935314
+    },
+    {
+      "id": "0x4d39ceb827747665e7be6657c418158d0e26f0f2d5a8ab5030b38e385aa5a5bd",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x065B3982eC4B1F155121Dd4f4b778d3030ac6491",
+      "fee": 10000,
+      "tickSpacing": 200,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155357131
+    },
+    {
+      "id": "0xe074d3df79c81430c3f5886421eeb198d6829dd7f9f9186b1ab6f94e303490b3",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0xc9687ee975B9111f24D1E55dE17ef656811aDe72",
+      "fee": 10000,
+      "tickSpacing": 200,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155361138
+    },
+    {
+      "id": "0xdd990a0aa14cc7095961b567604e3affa20a79a6d5907236087671a934750268",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x6e533193e971E02E635A9234459A39776a167dC4",
+      "fee": 10000,
+      "tickSpacing": 200,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155365776
+    },
+    {
+      "id": "0xd05cfe8a7fb5d67504e410b7afb7cf9b0aa9149ab72272d5e6a4548c3fe80223",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0xC8288f9Cc54a34b10CF5dba4FB528A3f5a4FFb41",
+      "fee": 3000,
+      "tickSpacing": 60,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155476988
+    },
+    {
+      "id": "0x6d63a886388be41043a395b8aa3e9cfbd0f225bb2d53aedcef7196c24cee0523",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x1Cc2509c65720D8B5D9F5e073848B9Faef0672D1",
+      "fee": 3000,
+      "tickSpacing": 60,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155477082
+    },
+    {
+      "id": "0x9a6282f883827ca740c6b7ca4d53c0acb2264051cabf486d00fac2ce03b5bfc1",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x981Bf71909aD6D5152Ea52A02f066C2bC3A3046c",
+      "fee": 3000,
+      "tickSpacing": 60,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155477182
+    },
+    {
+      "id": "0xe7742b68ff89bf6ac7d556a91abf2e1254ca68f74809c04319623103726bf650",
+      "currency0": "0x11F66Cf558C810f9C750d2eD6953F66869Fd645c",
+      "currency1": "0xF12d5C71c5103B0B9E903Cb531eD3FA7fa42E4a4",
+      "fee": 10100,
+      "tickSpacing": 105,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 155860879
     }
   ]
 }

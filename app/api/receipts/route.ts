@@ -26,6 +26,7 @@ const PROVIDERS: Record<string, string> = {
   [keccak256(toHex("UNISWAP_V4_DIRECT"))]: "Uniswap v4 direct pool",
   [keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"))]: "Verified v4 Aggregator Hook",
   [keccak256(toHex("SYNTHRA_V3"))]: "Synthra v3 pool",
+  [keccak256(toHex("REVIEWED_V2_THIRD_PARTY"))]: "Source-reviewed third-party V2 pool",
 };
 
 function providerLabel(providerId: Hex) {

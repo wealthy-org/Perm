@@ -6,6 +6,7 @@ const contracts = [
   ['PermRouter', 'contracts/artifacts/contracts/src/PermRouter.sol/PermRouter.json'],
   ['PermV4Adapter', 'contracts/artifacts/contracts/src/adapters/PermV4Adapter.sol/PermV4Adapter.json'],
   ['PermV3Adapter', 'contracts/artifacts/contracts/src/adapters/PermV3Adapter.sol/PermV3Adapter.json'],
+  ['PermV2Adapter', 'contracts/artifacts/contracts/src/adapters/PermV2Adapter.sol/PermV2Adapter.json'],
   ['PermTimelock', 'contracts/artifacts/contracts/src/PermTimelock.sol/PermTimelock.json'],
 ];
 for (const [name, relative] of contracts) {

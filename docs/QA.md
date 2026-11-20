@@ -4,9 +4,9 @@ Date: 17 November 2026 (Asia/Jakarta; sandbox command logs use an independent UT
 
 ## Release status and scope
 
-This record validates the checked-in **Router v2 code and release path**. It does not claim that Router v2 is live.
+This record validates the checked-in **Router v2 code, non-release staging path, and release gates**. Router v2 is live only as wallet-allowlisted staging; this record does not claim an official Router-v2 release.
 
-The official manifest, `deployments/robinhood-testnet.json`, still identifies Router v1 and does not set `executionReady: true`. The production UI and quote API therefore remain fail-closed: live quotes can be inspected, but signed v2 execution is unavailable until a candidate is deployed, verified, transferred to governance, and explicitly promoted.
+The official manifest, `deployments/robinhood-testnet.json`, still identifies Router v1 and does not set `executionReady: true`. The separate public staging record is `deployments/robinhood-testnet.v2-staging.json`; it keeps `executionReady: false`, single-EOA testnet governance, local-burner signer custody, disabled Aggregator Hooks, and manual WalletConnect proof. Promotion remains fail-closed until the independent release path passes.
 
 ## Automated gates
 
@@ -19,13 +19,13 @@ The official manifest, `deployments/robinhood-testnet.json`, still identifies Ro
 | ESLint | Passed with zero warnings |
 | TypeScript | Passed |
 | Production Next.js build | Passed; 10 static/dynamic routes generated |
-| Router/adapters/timelock suite | **31 passing, 2 fork suites pending** in the regular run |
-| Latest-state fork integrations | **2 passing**: real Robinhood v4 in both directions and real Synthra v3/Permit2 in both directions |
-| Solidity coverage | **86.80% statements, 55.75% branches, 89.47% functions, 85.98% lines**; Router itself remains 97.56% statements |
+| Router/adapters/timelock suite | **36 passing, 3 opt-in fork suites pending** in the regular run |
+| Latest-state fork integrations | **3 passing**: real Robinhood v4, real Synthra v3/Permit2, and the dormant codehash-pinned V2 adapter against its reviewed pair |
+| Solidity coverage | **89.12% statements, 56.49% branches, 89.47% functions, 88.79% lines**; Router is 97.56% statements and dormant V2 adapter is 96.55% |
 | Coverage cleanup | Passed; the wrapper cleaned instrumented output, rebuilt production artifacts, and re-exported browser ABIs |
 | Browser artifact integrity | Passed after coverage cleanup |
 | Fuzz/invariants | Passed 1,024 deterministic uint127 fee inputs plus randomized conservation/reserve scenarios |
-| Slither 0.11.3 | **71 contracts, 100 detectors, 0 findings** |
+| Slither 0.11.3 | **77 contracts, 100 detectors, 0 findings** after the dormant V2 adapter was added and refactored |
 | Server-runtime integration | Passed bounded settings, streamed body cap, proxy identity, token bucket, and in-flight cache coalescing |
 | Quote-signer regression | Passed: production local-key signing is blocked; mocked authenticated remote signatures recover; redirect, content-type, size, identity, and signature failures close |
 | Real KMS/HSM signer probe | **Pending operator endpoint/token and candidate addresses**; `release:probe-signer` is ready and its log digest is mandatory custody evidence |
@@ -34,6 +34,10 @@ The official manifest, `deployments/robinhood-testnet.json`, still identifies Ro
 | Release-gate regression | Passed: short-delay timelock promotion, unbounded monitor settings, zero-sized discovery chunks, and role/evidence tampering fail closed without changing the official manifest |
 | Evidence downloader | Passed deterministic redirect/SSRF/size/hash regressions and a live commit-pinned HTTPS download through the DNS-pinned production path |
 | Hosted quote proof | Passed full EIP-712 quote-ID reconstruction and authorized-signer recovery; field, route, gas, timing, and signer mutations fail closed |
+| Non-release staging evidence | **8 of 9 scenarios recorded and independently reverified**; WalletConnect mobile QR attestation remains pending |
+| Explicit cross-venue settlement | Passed canonical two-step `UNISWAP_V4_DIRECT → SYNTHRA_V3` transaction `0x994b…7290` |
+| V2 venue admission | **Withheld**: exact upstream implementation, but unattributed ownership, zero 30-day swaps, and only `0.001604` / `0.015` alternate-WETH reserves |
+| Manual pool discovery | Passed overlap rescan through block `155962684`; registry increased from 1,388 to 1,395 direct no-hook pools |
 | Operations script syntax | Passed for deployment, ownership, discovery, indexer, monitoring, verification, and promotion scripts |
 | Current official-manifest monitor | **0 failures** on Router v1; warnings correctly report absent local fallback/indexer/alert configuration and intentionally disabled v2 execution |
 
@@ -53,8 +57,9 @@ The regression suite confirms:
 - treasury/referral liabilities use pull accounting and remain protected reserves;
 - native output succeeds for a valid recipient and atomically rolls back for a rejecting recipient;
 - minimum-output and adapter-reentrancy failures roll back quote consumption, fees, balances, and allowances;
-- Router and both adapters can rescue only owner-authorized stranded balances outside active execution;
-- forced native and ERC-20 balances were recovered from both adapters, while an unauthorized caller and a rejecting native recipient failed;
+- Router and deployed v4/v3 adapters can rescue only owner-authorized stranded balances outside active execution;
+- the dormant V2 adapter accepts only its immutable Router as caller and settlement recipient, validates factory-selected direct pairs plus dependency/pair codehashes, rejects reserve/balance drift and fee-on-transfer behavior, and remains undeployed;
+- forced native and ERC-20 balances were recovered from the deployed adapter implementations, while an unauthorized caller and a rejecting native recipient failed;
 - zero fee, full rebate, dust rounding, referral conservation, and reserve accounting hold;
 - emergency pause, signer rotation, and two-step ownership work; and
 - a real OpenZeppelin timelock batch can schedule and atomically accept Router, v4-adapter, and v3-adapter ownership only after the delay.
@@ -71,11 +76,22 @@ Latest-state fork tests used the current public Robinhood testnet state because 
 
 - v4: native→token and token→native settlement through the real PoolManager, including signed quotes and rebate accounting;
 - Synthra v3: native→TSLA and Permit2-backed TSLA→native settlement through the reviewed SwapRouter and WETH targets;
-- result: **2 passing**.
+- dormant V2 adapter: native→TSLA through the exact-source, codehash-pinned direct pair;
+- result: **3 passing**.
 
-The finalized, overlap-rescanned v4 registry was refreshed through block `155000635` and remains at **1,388 eligible direct pools**.
+The V2 fork success proves adapter compatibility only. `deployments/robinhood-testnet.v2-venue-review.json` still withholds venue admission because provenance, recent activity, and meaningful liquidity are not established.
+
+The finalized, overlap-rescanned v4 registry was refreshed through block `155962684` and contains **1,395 eligible direct pools**. The seven additions all have the zero hook address; no Aggregator Hook was admitted.
 
 The official deployment monitor also ran against live chain state with **zero failures**. It confirmed chain freshness, runtime bytecode at all configured targets, owner/treasury, unpaused state, policy `20 / 2500`, and the enabled direct-v4 adapter. Its remaining warnings are expected and release-relevant: official Router v1, pending source verification, and no manifest-declared timelock.
+
+## Router-v2 non-release staging evidence
+
+The source-verified Router-v2 staging deployment has canonical evidence for direct v4, Synthra v3, token-to-token multi-hop, explicit v4→v3 cross-venue routing, Permit2, referral accrual, treasury claim, and referral claim. `corepack pnpm staging:verify-evidence` independently rereads transactions, canonical blocks, signed calldata, continuous route steps, exact provider/adapter identities, fee invariants, Permit2 data, accruals, and claims.
+
+The explicit cross-venue transaction is `0x994b1b8ac83d8e3ae03d036c9d85cadc71e8b93e3144b8c6167d471716f77290`; its two settled providers are `UNISWAP_V4_DIRECT` followed by `SYNTHRA_V3`. Its local-loopback quote path is not represented as hosted-service evidence. WalletConnect remains the ninth, manual mobile QR-pairing scenario and requires an independent signed attestation.
+
+The live staging health boundary remains `staging-ready-non-release` with `stagingReady=true` and `executionReady=false`. Governance is still a single testnet EOA and quote signing still uses explicitly allowed staging-local custody; neither can satisfy release readiness.
 
 ## Real PostgreSQL and indexer integration
 
@@ -95,7 +111,7 @@ Indexed settlements:
 - `0xf76cdc7e4c1d20b43b5d7bfb62314599b78355b55f5965b41d6553126e5ab60b` at block `154836799`;
 - `0x17b294d4b5c212f83c8ea4536e9d2fd4f5b650a34297d46db2e5c27e59ab9904` at block `154842634`.
 
-After a final one-shot sync, a database-aware monitor run reported zero failures, a canonical cursor hash, 12-block lag (the configured confirmation depth), and a fresh cursor timestamp. This proves the PostgreSQL/indexer/API/monitor path; production still needs a durable hosted database and continuously running worker.
+After a final one-shot sync, a database-aware monitor run reported zero failures, a canonical cursor hash, 12-block lag (the configured confirmation depth), and a fresh cursor timestamp. The later allowlisted staging path also returned Neon-backed canonical history after a successful manual indexer run. This proves the worker/schema/API path, but does not prove a continuously scheduled worker, backup/restore drill, or alert delivery. Scheduled monitoring remains deliberately disabled while alerting is deferred.
 
 ## Production server, API, and browser smoke tests
 
@@ -150,15 +166,16 @@ These transactions remain valid evidence for the currently official Router v1 on
 
 Router v2 must remain non-executable until all of the following are complete:
 
-1. deploy a v2 candidate with a dedicated release key and RPC;
-2. verify Router, both adapters, and timelock source on Blockscout;
-3. use the enforced minimum 48-hour timelock, then schedule, wait for, and execute all three `acceptOwnership()` calls;
+1. deploy a release candidate with dedicated, separated governance, treasury, guardian, deployer, and remote-signer identities;
+2. verify that candidate Router, deployed adapters, and timelock source on Blockscout;
+3. use the enforced minimum 48-hour timelock, then schedule, wait for, and execute all ownership-acceptance calls;
 4. run candidate verification until ownership and source gates both pass;
-5. configure a durable hosted PostgreSQL worker, fallback RPC, monitoring, and alert webhook;
-6. configure the production quote-signer key matching the onchain signer;
-7. supply a real WalletConnect project ID and complete external-wallet QR pairing; the no-project-ID fail-closed UI was tested, but real pairing was not;
-8. perform v2 E2E swaps from a non-treasury wallet and verify indexed per-step receipts;
-9. keep Aggregator Hook mode disabled until a specific deployment, permissions, quote semantics, calldata, and runtime codehash are independently reviewed; and
-10. complete independent audit, governance review, incident drill, and bug-bounty readiness before any use with assets of value.
+5. schedule the hosted PostgreSQL worker and complete fallback-RPC, backup/restore, load, and real alert-delivery drills; monitoring remains disabled while alerting is deferred;
+6. configure and probe a non-exportable remote quote-signer key matching the onchain signer;
+7. use the existing Reown configuration for a real external mobile WalletConnect QR session and obtain the independent signed attestation;
+8. repeat the staging transaction suite against the release candidate with release custody and hosted operations; interim burner-staging evidence cannot be promoted;
+9. keep Aggregator Hook mode disabled until a specific deployment, permissions, quote semantics, calldata, runtime codehash, and canonical settlement are independently reviewed;
+10. keep third-party V2 routing disabled until every gate in `docs/V2_VENUE_REVIEW.md` passes; and
+11. complete independent audit, governance review, incident drill, funded bug bounty, and four-role approvals before any use with assets of value.
 
 No local rehearsal, fork test, or generated candidate should be described as the official Router v2 while the shared manifest remains Router v1.

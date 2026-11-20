@@ -20,6 +20,24 @@ export const v3QuoterAbi = parseAbi([
   "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
 ]);
 
+export const v2FactoryAbi = parseAbi([
+  "function getPair(address tokenA,address tokenB) view returns (address pair)",
+]);
+
+export const v2PairAbi = parseAbi([
+  "function factory() view returns (address)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
+  "function getReserves() view returns (uint112 reserve0,uint112 reserve1,uint32 blockTimestampLast)",
+]);
+
+export const permV2AdapterAbi = parseAbi([
+  "function permRouter() view returns (address)",
+  "function factory() view returns (address)",
+  "function weth() view returns (address)",
+  "function pairCodehash() view returns (bytes32)",
+]);
+
 export const permV4AdapterAbi = parseAbi([
   "function verifiedHooks(address hook) view returns (bool)",
   "function verifiedHookCodehashes(address hook) view returns (bytes32)",

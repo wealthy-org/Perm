@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { discoverTwoStepRoutes, mapLimited, topByOutput } from "../lib/server/route-planner";
+import { discoverTwoStepRoutes, isExplicitV4V3Route, mapLimited, topByOutput } from "../lib/server/route-planner";
 
 type Token = { address: string; symbol: string };
 type Step = { amountOut: string; path: string };
@@ -42,8 +42,20 @@ async function main() {
   ]);
   assert.equal(calls.filter((value) => value === "A>C").length, 1, "duplicate intermediary addresses must be deduplicated");
   assert.deepEqual(topByOutput([{ amountOut: "9" }, { amountOut: "11" }], 1), [{ amountOut: "11" }]);
+  assert.equal(isExplicitV4V3Route({
+    routeKind: "cross-venue",
+    steps: [{ providerId: "UNISWAP_V4_DIRECT" }, { providerId: "SYNTHRA_V3" }],
+  }), true);
+  assert.equal(isExplicitV4V3Route({
+    routeKind: "multi-hop",
+    steps: [{ providerId: "UNISWAP_V4_DIRECT" }, { providerId: "SYNTHRA_V3" }],
+  }), false);
+  assert.equal(isExplicitV4V3Route({
+    routeKind: "cross-venue",
+    steps: [{ providerId: "SYNTHRA_V3" }, { providerId: "SYNTHRA_V3" }],
+  }), false);
   await assert.rejects(() => mapLimited([1], 0, async (value) => value), /between 1 and 32/);
-  console.log("Route planner: all supported intermediaries, output ranking, deduplication, and search bounds passed");
+  console.log("Route planner: intermediaries, explicit v4/v3 selection, output ranking, deduplication, and search bounds passed");
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -62,7 +62,7 @@ export default function DocsPage() {
             <h2>Product decision</h2>
             <div className="decision-grid">
               <article><span>01</span><h3>Hook-aware routing</h3><p>Include Uniswap v4 Aggregator Hook candidates only where deployment, quote, and integration details are verified for the target chain.</p></article>
-              <article><span>02</span><h3>Perm Fee Rebate</h3><p>Reduce the Perm platform fee on eligible swaps through the Perm entry point, including valid V2, V3, or other venue routes.</p></article>
+              <article><span>02</span><h3>Perm Fee Rebate</h3><p>Reduce the Perm platform fee on eligible swaps through the Perm entry point. A venue type such as V2 is included only after its deployment is separately reviewed and enabled; the current third-party V2 candidate remains withheld.</p></article>
             </div>
             <div className="docs-callout warning"><b>Not the default:</b> forcing every trade through a custom Perm hook. The router still compares valid net results and exposes gas separately.</div>
           </section>
