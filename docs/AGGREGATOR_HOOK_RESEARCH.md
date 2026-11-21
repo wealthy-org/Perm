@@ -11,6 +11,46 @@ No Aggregator Hook is approved for Perm on Robinhood Chain Testnet (`46630`). Ke
 
 Mainnet (`4663`) observations are research context only. They do not establish testnet availability and must never be copied into a chain-`46630` manifest.
 
+## Isolated Perm test fixture — explicitly non-official
+
+The repository now contains `PermTestAggregatorHook`, an ownerless chain-`46630` fixture for testing settlement mechanics. This carve-out does **not** change the decision above: it is not an official Uniswap Labs Aggregator Hook, it cannot satisfy official provenance or audit gates, and it must not be entered in `reviewedHooks` or enabled through the Production Aggregator Hook provider.
+
+Its on-chain label is fixed to `Perm test hook - not an official Aggregator Hook`. If admitted to an allowlisted test environment later, its distinct Router-v2 provider identity is `PERM_TEST_AGGREGATOR_HOOK` (`0x67f39816b175ceb3cdf2f397ce1cb1a16dfc3835367cb517875789b7abfaee6e`), never `UNISWAP_V4_AGGREGATOR_HOOK`.
+
+### Predeployment containment
+
+- Constructor deployment is forbidden unless `block.chainid == 46630`.
+- The immutable PoolManager must be `0x8366a39CC670B4001A1121B8F6A443A643e40951` with runtime codehash `0xbd3881180b547f5fe817545743cfb4343e96b1bc6640dcd70c106b0066e95626`.
+- The planned immutable external venue is Synthra WETH/TSLA pool `0x593e2e0EF3869616Ec3Fbe989dCFf2699D52b69B`, pinned to runtime codehash `0x957b9c75dd4bb82220fe2058038825c5ba1633543526ef6e3d61c0560d501115`.
+- The only accepted PoolKey is WETH `0x33e4191705c386532ba27cBF171Db86919200B94` / TSLA `0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E`, fee `3000`, tick spacing `60`, and the fixture itself as hook.
+- Liquidity and exact-output paths fail closed. Callback sender, active-swap context, PoolId, amount, direction/currency, one-payment semantics, external runtime codehash, and exact output settlement are checked.
+- Transient callback state is cleared after every successful swap; transaction rollback clears it on every failure.
+- Router-v2 independently pins the fixture runtime codehash before a hook-backed route can execute.
+
+The current deterministic CREATE2 plan, produced by `pnpm contracts:plan:test-hook`, is:
+
+- singleton deployer: `0x4e59b44847b379578588920cA78FbF26c0B4956C`;
+- salt: `0x0000000000000000000000000000000000000000000000000000000000001c35`;
+- init-code hash: `0x9a6bf9767780ae7ed44b31bd2835151ff76e89d558cc09f010c65c9792555d4a`;
+- predicted address: `0x138d5D828653df00096ad2FED73DA57d42f82888`;
+- low permission bits: `0x2888`; and
+- expected runtime codehash: `0xf054f9a184cb7a4ffa47b6c655d6b41ba85cfc2887e2395ad7671e7bbf8582b9`.
+
+These values are compiler- and source-sensitive. The planning command and fork suite must reproduce all of them immediately before any transaction is signed.
+
+### Predeployment proof
+
+The isolated suite performs a local CREATE2 deployment through the singleton deployer, initializes the canonical PoolKey, and settles WETH→TSLA and TSLA→WETH exact-input routes through Perm Router-v2. It checks canonical `AggregatorPoolRegistered`, `HookSwap`, external-pool `Swap`, `RouteStepSettled`, and `SwapSettled` evidence. Negative cases cover wrong-chain construction, bad initialization and swap keys, unauthorized PoolManager and callback callers, callback-without-active-swap, hook data, liquidity, exact output, callback replay, nested swap reentrancy, wrong callback currency, partial input, short output, external venue code drift, and adapter-pinned hook code drift.
+
+Run both gates before considering a live testnet transaction:
+
+```sh
+pnpm contracts:test
+pnpm contracts:test:fork
+```
+
+As of 2026-11-17, no live fixture deployment, PoolKey initialization, adapter allowlisting, hook-provider configuration, or manifest admission has occurred. Production routing remains disabled and `executionReady` remains false.
+
 ## Evidence standard
 
 A nonzero hook address, expected address flags, matching event topics, a hooklist submission, or successful swaps are not sufficient authentication. Before onboarding, one chain-specific candidate must have all of the following:
