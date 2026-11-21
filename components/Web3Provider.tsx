@@ -4,7 +4,11 @@ import { createWalletClient, custom, numberToHex, type Address, type EIP1193Prov
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type UniversalProvider from "@walletconnect/universal-provider";
 import { RH_TESTNET_CHAIN_ID, RH_TESTNET_EXPLORER, robinhoodTestnet } from "@/lib/web3/config";
-import { parseEip155ChainId } from "@/lib/web3/eip1193";
+import {
+  parseEip155ChainId,
+  WALLETCONNECT_EIP155_METHODS,
+  walletConnectSessionHasRequiredMethods,
+} from "@/lib/web3/eip1193";
 
 declare global {
   interface Window {
@@ -200,20 +204,16 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
           namespaces: {
             eip155: {
               chains: [`eip155:${RH_TESTNET_CHAIN_ID}`],
-              methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData_v4"],
-              events: ["accountsChanged", "chainChanged"],
-              rpcMap: { [RH_TESTNET_CHAIN_ID]: robinhoodTestnet.rpcUrls.default.http[0] },
-            },
-          },
-          optionalNamespaces: {
-            eip155: {
-              chains: [`eip155:${RH_TESTNET_CHAIN_ID}`],
-              methods: ["eth_sign", "eth_signTypedData", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
+              methods: [...WALLETCONNECT_EIP155_METHODS],
               events: ["accountsChanged", "chainChanged"],
               rpcMap: { [RH_TESTNET_CHAIN_ID]: robinhoodTestnet.rpcUrls.default.http[0] },
             },
           },
         });
+        if (!walletConnectSessionHasRequiredMethods(wc.session?.namespaces)) {
+          try { await wc.disconnect(); } catch { /* invalid session may already be closed */ }
+          throw new Error("Wallet did not approve the methods required to submit Perm transactions");
+        }
         if (attemptId !== walletConnectAttemptId.current) {
           try { await wc.disconnect(); } catch { /* a cancelled pairing may have no active session */ }
           return;
