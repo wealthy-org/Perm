@@ -4,6 +4,7 @@ import { createWalletClient, custom, numberToHex, type Address, type EIP1193Prov
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type UniversalProvider from "@walletconnect/universal-provider";
 import { RH_TESTNET_CHAIN_ID, RH_TESTNET_EXPLORER, robinhoodTestnet } from "@/lib/web3/config";
+import { parseEip155ChainId } from "@/lib/web3/eip1193";
 
 declare global {
   interface Window {
@@ -58,10 +59,12 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
     if (!active) return;
     const [accounts, chain] = await Promise.all([
       active.request({ method: "eth_accounts" }) as Promise<Address[]>,
-      active.request({ method: "eth_chainId" }) as Promise<string>,
+      active.request({ method: "eth_chainId" }),
     ]);
+    const nextChainId = parseEip155ChainId(chain);
+    if (nextChainId === undefined) throw new Error("Wallet returned an invalid chain ID");
     setAccount(accounts[0]);
-    setChainId(Number.parseInt(chain, 16));
+    setChainId(nextChainId);
   }, [provider]);
 
   useEffect(() => {
@@ -109,7 +112,15 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!provider?.on) return;
     const accountsChanged = (value: unknown) => setAccount((value as Address[])[0]);
-    const chainChanged = (value: unknown) => setChainId(Number.parseInt(String(value), 16));
+    const chainChanged = (value: unknown) => {
+      const nextChainId = parseEip155ChainId(value);
+      if (nextChainId === undefined) {
+        setChainId(undefined);
+        setError("Wallet returned an invalid chain ID");
+        return;
+      }
+      setChainId(nextChainId);
+    };
     const disconnected = () => { setAccount(undefined); setChainId(undefined); };
     provider.on("accountsChanged", accountsChanged);
     provider.on("chainChanged", chainChanged);
@@ -207,7 +218,6 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
           try { await wc.disconnect(); } catch { /* a cancelled pairing may have no active session */ }
           return;
         }
-        walletConnectAttempt.current = undefined;
         setWalletConnectUri(undefined);
         setWalletConnectQr(undefined);
         active = wc as unknown as EIP1193Provider & ProviderEvents;
@@ -215,15 +225,20 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
         active = getInjectedProvider();
         await active.request({ method: "eth_requestAccounts" });
       }
+      const chain = parseEip155ChainId(await active.request({ method: "eth_chainId" }));
+      if (chain === undefined) throw new Error("Wallet returned an invalid chain ID");
+      if (chain !== RH_TESTNET_CHAIN_ID) await switchWith(active);
+      else await refresh(active);
       setProvider(active);
       setWalletMode(mode);
-      const chain = await active.request({ method: "eth_chainId" }) as string;
-      if (Number.parseInt(chain, 16) !== RH_TESTNET_CHAIN_ID) await switchWith(active);
-      else await refresh(active);
+      if (mode === "walletconnect") walletConnectAttempt.current = undefined;
     } catch (cause) {
       const cancelled = attemptId !== walletConnectAttemptId.current;
       if (mode === "walletconnect" && !cancelled) {
-        try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* pairing already settled */ }
+        try { await walletConnectAttempt.current?.disconnect(); }
+        catch {
+          try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* pairing already settled */ }
+        }
         walletConnectAttempt.current = undefined;
         setWalletConnectUri(undefined);
         setWalletConnectQr(undefined);
