@@ -5,6 +5,7 @@ import {
   WALLETCONNECT_REQUIRED_METHODS,
   walletConnectSessionHasRequiredMethods,
 } from "../lib/web3/eip1193";
+import { submitWalletTransactionWithRecovery } from "../lib/web3/wallet-transaction";
 
 assert.equal(parseEip155ChainId("0xb626"), 46_630, "EIP-1193 hexadecimal chain IDs must parse as hexadecimal");
 assert.equal(parseEip155ChainId("46630"), 46_630, "WalletConnect decimal chain references must parse as decimal");
@@ -34,4 +35,33 @@ assert.equal(walletConnectSessionHasRequiredMethods({
 }), false, "sessions without transaction submission must fail closed");
 assert.equal(walletConnectSessionHasRequiredMethods(undefined), false, "missing session namespaces must fail closed");
 
-console.log("Wallet provider chain-ID and session-capability tests passed");
+async function testCanonicalRecovery() {
+  const walletHash = "0x1111111111111111111111111111111111111111111111111111111111111111" as const;
+  const recoveredHash = "0x2222222222222222222222222222222222222222222222222222222222222222" as const;
+  assert.equal(await submitWalletTransactionWithRecovery({
+    submit: async () => walletHash,
+    findCanonicalHash: async () => undefined,
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+  }), walletHash, "the wallet response must win when it returns normally");
+  let recoveryPolls = 0;
+  assert.equal(await submitWalletTransactionWithRecovery({
+    submit: () => new Promise<never>(() => undefined),
+    findCanonicalHash: async () => ++recoveryPolls >= 2 ? recoveredHash : undefined,
+    timeoutMs: 100,
+    pollIntervalMs: 1,
+  }), recoveredHash, "a canonical settlement must recover a missing wallet response");
+  await assert.rejects(() => submitWalletTransactionWithRecovery({
+    submit: () => new Promise<never>(() => undefined),
+    findCanonicalHash: async () => undefined,
+    timeoutMs: 3,
+    pollIntervalMs: 1,
+  }), /no canonical settlement was found/, "an uncertain submission must time out without inviting a blind retry");
+}
+
+void testCanonicalRecovery().then(() => {
+  console.log("Wallet provider chain-ID, session-capability, and canonical-recovery tests passed");
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

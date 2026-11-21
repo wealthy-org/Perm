@@ -33,6 +33,7 @@ import {
 } from "@/lib/web3/tokens";
 import type { LiveQuote } from "@/lib/web3/quote";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
+import { submitWalletTransactionWithRecovery } from "@/lib/web3/wallet-transaction";
 
 type PickerSide = "sell" | "buy" | null;
 type TxStage = "idle" | "approving" | "signing" | "simulating" | "submitting" | "confirming" | "success" | "error";
@@ -359,8 +360,26 @@ export default function TradeApp() {
         value: quote.tokenIn === ZERO_ADDRESS ? request.amountIn : 0n,
       });
 
-      setTx({ stage: "submitting", message: "Confirm the settlement transaction in your wallet…" });
-      const hash = await wallet.writeContract(simulation.request);
+      const router = deployment.router;
+      let recoveryFromBlock = await publicClient.getBlockNumber();
+      setTx({ stage: "submitting", message: "Confirm in your wallet. If its response is delayed, Perm will recover the canonical settlement…" });
+      const hash = await submitWalletTransactionWithRecovery({
+        submit: () => wallet.writeContract(simulation.request),
+        findCanonicalHash: async () => {
+          const latestBlock = await publicClient.getBlockNumber();
+          if (latestBlock < recoveryFromBlock) return undefined;
+          const logs = await publicClient.getContractEvents({
+            address: router,
+            abi: permRouterAbi,
+            eventName: "SwapSettled",
+            args: { quoteId: request.quoteId, account },
+            fromBlock: recoveryFromBlock,
+            toBlock: latestBlock,
+          });
+          recoveryFromBlock = latestBlock + 1n;
+          return logs[0]?.transactionHash;
+        },
+      });
       setTx({ stage: "confirming", hash, message: "Waiting for Robinhood Chain testnet confirmation…" });
       const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
       if (receipt.status !== "success") throw new Error("The transaction reverted; no fee or rebate receipt was created.");
