@@ -50,6 +50,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
   const [walletConnectUri, setWalletConnectUri] = useState<string>();
   const [walletConnectQr, setWalletConnectQr] = useState<string>();
   const walletConnectAttempt = useRef<UniversalProvider | undefined>(undefined);
+  const walletConnectAttemptId = useRef(0);
   const walletDialogRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (source?: EIP1193Provider) => {
@@ -71,10 +72,13 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
   }, [provider, refresh]);
 
   const closeWalletConnect = useCallback(() => {
+    walletConnectAttemptId.current += 1;
     try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* already settled */ }
     walletConnectAttempt.current = undefined;
     setWalletConnectUri(undefined);
     setWalletConnectQr(undefined);
+    setConnecting(false);
+    setError(undefined);
   }, []);
 
   useEffect(() => {
@@ -143,6 +147,8 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
   }, [provider, switchWith]);
 
   const connect = useCallback(async (mode: WalletMode = "injected") => {
+    const attemptId = walletConnectAttemptId.current + 1;
+    walletConnectAttemptId.current = attemptId;
     setConnecting(true);
     setError(undefined);
     try {
@@ -164,6 +170,10 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
         });
         walletConnectAttempt.current = wc;
         wc.on("display_uri", (uri: unknown) => {
+          if (attemptId !== walletConnectAttemptId.current) {
+            try { wc.abortPairingAttempt(); } catch { /* stale pairing is already closed */ }
+            return;
+          }
           if (typeof uri !== "string" || uri.length > 4_096 || !uri.startsWith("wc:")) {
             try { wc.abortPairingAttempt(); } catch { /* invalid pairing is already closed */ }
             setError("WalletConnect returned an invalid pairing URI");
@@ -193,6 +203,10 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
             },
           },
         });
+        if (attemptId !== walletConnectAttemptId.current) {
+          try { await wc.disconnect(); } catch { /* a cancelled pairing may have no active session */ }
+          return;
+        }
         walletConnectAttempt.current = undefined;
         setWalletConnectUri(undefined);
         setWalletConnectQr(undefined);
@@ -207,16 +221,18 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
       if (Number.parseInt(chain, 16) !== RH_TESTNET_CHAIN_ID) await switchWith(active);
       else await refresh(active);
     } catch (cause) {
-      if (mode === "walletconnect") {
+      const cancelled = attemptId !== walletConnectAttemptId.current;
+      if (mode === "walletconnect" && !cancelled) {
         try { walletConnectAttempt.current?.abortPairingAttempt(); } catch { /* pairing already settled */ }
         walletConnectAttempt.current = undefined;
         setWalletConnectUri(undefined);
         setWalletConnectQr(undefined);
       }
+      if (cancelled) return;
       setError(cause instanceof Error ? cause.message : "Wallet connection failed");
       throw cause;
     } finally {
-      setConnecting(false);
+      if (attemptId === walletConnectAttemptId.current) setConnecting(false);
     }
   }, [refresh, switchWith]);
 
