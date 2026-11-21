@@ -84,6 +84,8 @@ The fork suite executes:
 
 The V2 fork test proves compatibility only; `docs/V2_VENUE_REVIEW.md` withholds deployment and registration. The rehearsal deploys Router plus the admitted v4/v3 adapters, registers their provider identities and runs post-deploy reads. Its manifest is ignored by Git.
 
+The optional non-official D4 test-hook operation is **not** part of candidate deployment and must never use the commands below. It has irreversible testnet writes, a distinct isolated/frozen stack, exact acknowledgement, and a separate verifier. Follow [`TEST_HOOK_EVIDENCE.md`](TEST_HOOK_EVIDENCE.md) in full.
+
 ## 2. Prepare release identities
 
 Set shell variables locally:

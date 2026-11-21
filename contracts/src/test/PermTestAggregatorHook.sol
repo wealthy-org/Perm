@@ -144,6 +144,9 @@ contract PermTestAggregatorHook {
         revert LiquidityNotAllowed();
     }
 
+    // This intentionally sequences authenticated PoolManager and immutable-venue calls in one exact-settlement path.
+    // Transient active state is set before the venue call, and all deltas are verified before the final event.
+    // slither-disable-next-line reentrancy-events,cyclomatic-complexity
     function beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         external
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -212,17 +215,11 @@ contract PermTestAggregatorHook {
         _checkExternalPool();
         if (abi.decode(data, (bytes32)) != registeredPoolId) revert UnauthorizedCallback();
 
-        Currency inputCurrency;
-        uint256 amountOwed;
-        if (amount0Delta > 0 && amount1Delta < 0) {
-            inputCurrency = Currency.wrap(token0);
-            amountOwed = uint256(amount0Delta);
-        } else if (amount1Delta > 0 && amount0Delta < 0) {
-            inputCurrency = Currency.wrap(token1);
-            amountOwed = uint256(amount1Delta);
-        } else {
-            revert UnexpectedSwapDelta();
-        }
+        bool token0Owed = amount0Delta > 0 && amount1Delta < 0;
+        bool token1Owed = amount1Delta > 0 && amount0Delta < 0;
+        if (!token0Owed && !token1Owed) revert UnexpectedSwapDelta();
+        Currency inputCurrency = Currency.wrap(token0Owed ? token0 : token1);
+        uint256 amountOwed = token0Owed ? uint256(amount0Delta) : uint256(amount1Delta);
         address expectedInputCurrency = address(uint160(_transient(EXPECTED_INPUT_CURRENCY_SLOT)));
         address actualInputCurrency = Currency.unwrap(inputCurrency);
         if (actualInputCurrency != expectedInputCurrency) {
@@ -244,12 +241,17 @@ contract PermTestAggregatorHook {
         if (actual != externalPoolCodehash) revert ExternalPoolChanged(externalPoolCodehash, actual);
     }
 
+    // EIP-1153 transient storage has no high-level Solidity syntax in compiler 0.8.26.
+    // The four fixed namespaced slots are cleared after every successful swap and roll back on failure.
+    // slither-disable-next-line assembly
     function _setTransient(bytes32 slot, uint256 value) private {
         assembly ("memory-safe") {
             tstore(slot, value)
         }
     }
 
+    // EIP-1153 transient storage has no high-level Solidity syntax in compiler 0.8.26.
+    // slither-disable-next-line assembly
     function _transient(bytes32 slot) private view returns (uint256 value) {
         assembly ("memory-safe") {
             value := tload(slot)

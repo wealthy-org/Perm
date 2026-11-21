@@ -1,5 +1,6 @@
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const hre = require("hardhat");
+const { ethers } = hre;
 
 const RUN = process.env.RUN_FORK_TESTS === "1";
 const CHAIN_ID = 46630;
@@ -8,7 +9,7 @@ const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const CREATE2_DEPLOYER = "0x4e59b44847b379578588920cA78FbF26c0B4956C";
 const EXTERNAL_POOL = "0x593e2e0EF3869616Ec3Fbe989dCFf2699D52b69B";
 const EXTERNAL_POOL_CODEHASH = "0x957b9c75dd4bb82220fe2058038825c5ba1633543526ef6e3d61c0560d501115";
-const EXPECTED_TEST_HOOK_RUNTIME_CODEHASH = "0xf054f9a184cb7a4ffa47b6c655d6b41ba85cfc2887e2395ad7671e7bbf8582b9";
+const EXPECTED_TEST_HOOK_RUNTIME_CODEHASH = "0x3908f518529f4e2e5b961cfed36d44df9c08eee2722cbd5c42e82043f964cdca";
 const WETH = "0x33e4191705c386532ba27cBF171Db86919200B94";
 const TSLA = "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E";
 const FEE = 3000;
@@ -186,7 +187,9 @@ describe(RUN ? "Perm test Aggregator Hook · Robinhood testnet fork" : "Perm tes
     await router.configureHookProvider(await adapter.getAddress(), TEST_HOOK_PROVIDER);
     await adapter.setVerifiedHook(hook.target, true);
     const hookCodehash = ethers.keccak256(await ethers.provider.getCode(hook.target));
-    expect(hookCodehash).to.equal(EXPECTED_TEST_HOOK_RUNTIME_CODEHASH);
+    if (!hre.__SOLIDITY_COVERAGE_RUNNING) {
+      expect(hookCodehash).to.equal(EXPECTED_TEST_HOOK_RUNTIME_CODEHASH);
+    }
     expect(await adapter.verifiedHookCodehashes(hook.target)).to.equal(hookCodehash);
 
     const v4Data = coder.encode(

@@ -30,11 +30,11 @@ Its on-chain label is fixed to `Perm test hook - not an official Aggregator Hook
 The current deterministic CREATE2 plan, produced by `pnpm contracts:plan:test-hook`, is:
 
 - singleton deployer: `0x4e59b44847b379578588920cA78FbF26c0B4956C`;
-- salt: `0x0000000000000000000000000000000000000000000000000000000000001c35`;
-- init-code hash: `0x9a6bf9767780ae7ed44b31bd2835151ff76e89d558cc09f010c65c9792555d4a`;
-- predicted address: `0x138d5D828653df00096ad2FED73DA57d42f82888`;
+- salt: `0x000000000000000000000000000000000000000000000000000000000000184a`;
+- init-code hash: `0x5d33494be3c63be9cf163d217a3e74ef1360e525ea2380c3bf7c9d2e15a78a63`;
+- predicted address: `0x4B6aDd241E2bF18Fdd570b664a8fc642Ff0D6888`;
 - low permission bits: `0x2888`; and
-- expected runtime codehash: `0xf054f9a184cb7a4ffa47b6c655d6b41ba85cfc2887e2395ad7671e7bbf8582b9`.
+- expected runtime codehash: `0x3908f518529f4e2e5b961cfed36d44df9c08eee2722cbd5c42e82043f964cdca`.
 
 These values are compiler- and source-sensitive. The planning command and fork suite must reproduce all of them immediately before any transaction is signed.
 
@@ -42,14 +42,21 @@ These values are compiler- and source-sensitive. The planning command and fork s
 
 The isolated suite performs a local CREATE2 deployment through the singleton deployer, initializes the canonical PoolKey, and settles WETH→TSLA and TSLA→WETH exact-input routes through Perm Router-v2. It checks canonical `AggregatorPoolRegistered`, `HookSwap`, external-pool `Swap`, `RouteStepSettled`, and `SwapSettled` evidence. Negative cases cover wrong-chain construction, bad initialization and swap keys, unauthorized PoolManager and callback callers, callback-without-active-swap, hook data, liquidity, exact output, callback replay, nested swap reentrancy, wrong callback currency, partial input, short output, external venue code drift, and adapter-pinned hook code drift.
 
-Run both gates before considering a live testnet transaction:
+Run all isolated gates before considering a live testnet transaction:
 
 ```sh
 pnpm contracts:test
 pnpm contracts:test:fork
+pnpm contracts:coverage:test-hook
+pnpm contracts:plan:test-hook
+pnpm contracts:rehearse:test-hook
 ```
 
-As of 2026-11-17, no live fixture deployment, PoolKey initialization, adapter allowlisting, hook-provider configuration, or manifest admission has occurred. Production routing remains disabled and `executionReady` remains false.
+The dedicated rehearsal runner reproduces the reviewed CREATE2/init/runtime hashes, deploys and configures only a fresh isolated Router/adapter stack with provider `PERM_TEST_AGGREGATOR_HOOK`, executes a bounded WETH→TSLA route, clears isolated fee/token balances, pauses the Router, and renounces both owners. Its independent verifier was exercised end-to-end against a persistent latest-state local fork; rehearsal hashes remain local and are rejected as live evidence.
+
+The live runner additionally requires the exact non-official acknowledgement and a clean committed checkout. It writes a private operation journal before awaiting each receipt. The read-only verifier binds evidence to the same clean commit, recompiles source, validates every canonical transaction/calldata/event and current contract state, proves the isolated stack is paused/ownerless/token-clean, and confirms the existing staging stack and both manifests still exclude the hook. The complete operator procedure and irreversible effects are in [`TEST_HOOK_EVIDENCE.md`](TEST_HOOK_EVIDENCE.md).
+
+As of 2026-11-17, no live fixture deployment, PoolKey initialization, isolated live Router deployment, hook-provider configuration, or manifest admission has occurred. Production routing remains disabled and `executionReady` remains false.
 
 ## Evidence standard
 
@@ -113,7 +120,11 @@ Verified observations:
 - `poolIdToExternalPool` resolves the PoolId to `0x23D641FeCcD207E8794c593e8240444A0674C4Ba`.
 - Successful transaction `0xdbd70c66a82bf6814be3c9896e18668a09cd1929da301e7709d7a3898a31c9ee` contains the external pool's V3-compatible `Swap`, the hook's `HookSwap`, and PoolManager's `Swap` logs.
 
-This evidence establishes a functioning mainnet implementation, not a Perm-approved provider. The public official sources reviewed so far do not publish a deployment-address map tying this address to an authorized Uniswap Labs rollout, and the official repository does not publish an Aggregator Hook audit report in its audit table. Those provenance and assurance gaps remain blocking even on `4663`.
+A local read-only chain-`4663` fork now also proves PermV4Adapter compatibility. `pnpm contracts:test:mainnet-hook` executes WETH→UP through the existing hook and requires canonical `HookSwap`, a Router-v2 `RouteStepSettled` with nonzero hook, and exact runtime codehash `0x537d…29c7`. The provider identity is deliberately `UNAPPROVED_MAINNET_HOOK_COMPATIBILITY`, and the test cannot authorize admission or send a mainnet transaction.
+
+A same-state snapshot comparison at source block `119976784` is recorded in [`TRADE_COMPARISON.md`](TRADE_COMPARISON.md). For `0.001 WETH`, Perm routed `0.0009985 WETH` after its net `0.15%` platform fee and delivered `16.486093291644107017 UP`; the minimal direct same-pool harness routed the full input and delivered `16.510859559280844704 UP`. Gas remains separate because no pinned native→UP conversion was used.
+
+This evidence establishes a functioning mainnet implementation and Perm adapter compatibility, not a Perm-approved provider. The public official sources reviewed so far do not publish a deployment-address map tying this address to an authorized Uniswap Labs rollout, and the official repository does not publish an Aggregator Hook audit report in its audit table. Those provenance and assurance gaps remain blocking even on `4663`.
 
 References:
 

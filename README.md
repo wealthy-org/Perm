@@ -171,6 +171,15 @@ corepack pnpm contracts:test:fork
 
 Test ini menjalankan swap dua arah melalui PoolManager v4 dan Synthra v3 asli, termasuk Permit2 asli. RPC publik tidak menjamin historical state; gunakan `FORK_BLOCK_NUMBER` hanya bersama archive RPC atau saat sengaja menyegarkan fixture.
 
+Read-only compatibility terhadap candidate Aggregator Hook chain `4663` dan same-state output/gas comparison dijalankan terpisah:
+
+```bash
+corepack pnpm contracts:test:mainnet-hook
+corepack pnpm contracts:compare:mainnet-hook
+```
+
+Kedua command hanya berjalan pada local Hardhat fork, memakai provider identity `UNAPPROVED_MAINNET_HOOK_COMPATIBILITY`, dan tidak mengirim transaksi mainnet atau mengizinkan hook admission. Hasil perbandingan ada di [`docs/TRADE_COMPARISON.md`](docs/TRADE_COMPARISON.md).
+
 Static analysis:
 
 ```bash
@@ -188,8 +197,24 @@ Solidity coverage dan PostgreSQL asli dijalankan terpisah:
 
 ```bash
 corepack pnpm contracts:coverage
+corepack pnpm contracts:coverage:test-hook
 PGSSLMODE=disable TEST_DATABASE_URL='postgres://.../perm_test' corepack pnpm indexer:test-postgres
 ```
+
+Kedua gate coverage Solidity dijalankan di CI secara terpisah; test-hook chain `46630` tidak dikeluarkan dengan menurunkan threshold production.
+
+## D4 test-hook evidence — non-official
+
+Paket D4 untuk fixture berlabel `Perm test hook - not an official Aggregator Hook` dapat direhearsal tanpa transaksi publik:
+
+```bash
+corepack pnpm contracts:plan:test-hook
+corepack pnpm contracts:rehearse:test-hook
+```
+
+Rehearsal bukan bukti live. Operasi live tetap pending tindakan manual dari clean committed checkout dengan key testnet-only yang dikonfigurasi lokal. Operasi itu menggunakan stack Router/adapter baru yang terisolasi, swap WETH→TSLA sebesar `0.000001–0.001 WETH`, membersihkan fee/balance, lalu mem-pause dan melepaskan ownership kedua kontrak agar stack membeku permanen. Ia tidak menyentuh manifest resmi/staging atau Production routing.
+
+Baca seluruh irreversible effects, preflight, acknowledgement, failure handling, dan verifier read-only sebelum menjalankan apa pun: [`docs/TEST_HOOK_EVIDENCE.md`](docs/TEST_HOOK_EVIDENCE.md). Tidak ada private key, RPC credential, atau rehearsal hash yang boleh dianggap evidence D4.
 
 ## Deployment v2
 

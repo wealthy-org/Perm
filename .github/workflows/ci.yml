@@ -50,11 +50,19 @@ jobs:
       - run: pnpm contracts:compile
       - run: pnpm contracts:test
       - run: pnpm contracts:coverage
-      - name: Upload Solidity coverage report
+      - name: Upload default Solidity coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: solidity-coverage
+          path: coverage/
+          if-no-files-found: ignore
+      - run: pnpm contracts:coverage:test-hook
+      - name: Upload isolated test-hook coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solidity-coverage-test-hook
           path: coverage/
           if-no-files-found: ignore
       - run: pnpm server:test

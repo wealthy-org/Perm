@@ -94,7 +94,7 @@ Per checkpoint saat ini, hasil yang diharapkan:
 
 - ESLint: nol warning;
 - TypeScript: lulus;
-- kontrak: **36 passing, 3 fork tests pending**;
+- kontrak: **37 passing, 5 opt-in fork tests pending**;
 - server runtime, planner, staging policy, quote signer: lulus;
 - release-gate, assurance, evidence, WalletConnect, manifest, V2-review, indexer schema/target regressions: lulus;
 - Next.js production build: lulus;
@@ -195,7 +195,7 @@ Kriteria: runtime template dan browser artifact cocok di luar immutable slots ya
 corepack pnpm contracts:test
 ```
 
-Checkpoint saat ini: **36 passing, 3 pending**; tiga pending adalah fork suites yang sengaja opt-in.
+Checkpoint saat ini: **37 passing, 5 pending**; lima pending adalah fork suites yang sengaja opt-in, termasuk isolated test hook dan read-only mainnet compatibility.
 
 ## 7. Server, planner, API policy, dan release regressions
 
@@ -224,6 +224,7 @@ Kriteria:
 corepack pnpm audit:prod
 corepack pnpm audit:security
 corepack pnpm contracts:coverage
+corepack pnpm contracts:coverage:test-hook
 corepack pnpm build
 corepack pnpm audit:bundle
 ```
@@ -237,7 +238,16 @@ Checkpoint coverage saat ini:
 - Router statements: **97,56%**;
 - dormant V2 adapter statements: **96,55%**.
 
-`contracts:coverage` membersihkan instrumented artifacts, compile ulang, dan mengekspor artifact production. Penurunan material harus direview, bukan diterima otomatis.
+Chain-`46630` test-hook coverage dijalankan terpisah karena constructor sengaja menolak default chain `31337`:
+
+- statements: **100%**;
+- branches: **60,64%**;
+- functions: **100%**;
+- lines: **97,89%**.
+
+`contracts:coverage` mengecualikan hanya test-hook dan adversarial mock yang masuk gate fork terpisah. `contracts:coverage:test-hook` membersihkan artifact sebelum instrumentasi, menjalankan exact latest-state hook suite, lalu mengembalikan dan mengekspor artifact production. Kedua command wajib dan sekarang berjalan sebagai gate CI terpisah dengan artifact report masing-masing; pemisahan scope tidak boleh digunakan untuk menyembunyikan penurunan coverage.
+
+Audit terbaru: production dependencies bersih. Full audit memiliki satu exception low-severity development-only `GHSA-848j-6mx2-7j84`, tanpa patched upstream release, dengan expiry 15 Januari 2027.
 
 ## 9. Slither dari artifact bersih
 
@@ -255,7 +265,7 @@ slither . \
   --filter-paths 'contracts/src/mocks|contracts/test'
 ```
 
-Checkpoint saat ini: **77 contracts, 100 detectors, 0 results**. Temuan baru harus diselesaikan atau dijelaskan secara sempit; jangan membuat suppression global.
+Checkpoint saat ini: **82 contracts, 100 detectors, 0 results**. Fixture hook tetap dipindai; finding struktural hanya boleh diberi suppression sempit dengan alasan pada baris terkait. Jangan mengecualikan seluruh `contracts/src/test` atau membuat suppression global.
 
 ## 10. Latest-state fork integrations
 
@@ -266,13 +276,25 @@ unset FORK_BLOCK_NUMBER
 corepack pnpm contracts:test:fork
 ```
 
-Kriteria saat ini: **3 passing**:
+Kriteria saat ini: **6 passing**:
 
 1. v4 native→token dan token→native;
 2. Synthra v3 native→TSLA dan Permit2-backed TSLA→native;
-3. dormant V2 adapter native→TSLA terhadap pair yang source-exact dan codehash-pinned.
+3. dormant V2 adapter native→TSLA terhadap pair yang source-exact dan codehash-pinned;
+4. isolated chain-46630 test-hook settlement dua arah;
+5. test-hook authorization, key, liquidity, exact-output, dan drift boundaries; dan
+6. callback replay, nested reentrancy, wrong currency, partial payment, serta short-output containment.
 
 Catatan: public RPC tidak menyediakan old archival block, sehingga suite menggunakan latest state. V2 fork success hanya membuktikan compatibility, bukan provenance, liquidity, activity, atau admission.
+
+Read-only compatibility terhadap candidate hook chain `4663` dijalankan terpisah:
+
+```bash
+corepack pnpm contracts:test:mainnet-hook
+corepack pnpm contracts:compare:mainnet-hook
+```
+
+Test mewajibkan `HookSwap`, nonzero hook pada `RouteStepSettled`, dan exact runtime codehash. Provider sengaja diberi identitas `UNAPPROVED_MAINNET_HOOK_COMPATIBILITY`; hasilnya tidak mengizinkan admission atau deployment mainnet. Tabel same-state output/fee/rebate/gas tersedia di `docs/TRADE_COMPARISON.md`.
 
 Lanjutkan dengan rehearsal deployment pada fork lokal:
 
@@ -281,6 +303,19 @@ corepack pnpm contracts:rehearse:testnet
 ```
 
 Kriteria: Router v2, admitted v4/v3 adapters, provider IDs, dependency/codehash checks, dan post-deploy reads lulus; rehearsal manifest tetap `executionReady=false` dan bukan deployment resmi.
+
+### D4 isolated non-official test-hook package
+
+D4 memiliki rehearsal terpisah karena tidak boleh masuk deployment manifest biasa:
+
+```bash
+corepack pnpm contracts:plan:test-hook
+corepack pnpm contracts:rehearse:test-hook
+```
+
+Rehearsal harus mereproduksi exact CREATE2/init/runtime identity, PoolKey/dependency checks, satu bounded WETH→TSLA settlement, fee/token-balance cleanup, Router pause, dan ownership renunciation pada Router/adapter terisolasi. Caught-failure path setelah Router tersedia juga harus berakhir `isolatedStackSecure: true` atau secara eksplisit meminta manual recovery; ia tidak boleh membuat valid evidence file.
+
+Live operation hanya manual dari clean committed checkout, memerlukan acknowledgement exact dan locally configured testnet-only key, serta dapat membuat 12–14 irreversible public testnet transactions. `staging:verify-test-hook` kemudian recompiles exact evidence commit dan memverifikasi setiap receipt/calldata/event, deployment source, current paused/ownerless/token-clean state, existing-staging non-admission, serta unchanged manifests. Jangan menjalankan live command dari dokumentasi ringkas; ikuti [`TEST_HOOK_EVIDENCE.md`](TEST_HOOK_EVIDENCE.md) seluruhnya. Sampai verifier live lulus, status D4 tetap pending dan rehearsal hash tidak boleh dipublikasikan sebagai evidence.
 
 ## 11. Bukti staging yang sudah ada — read-only
 
