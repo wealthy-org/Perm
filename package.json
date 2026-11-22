@@ -58,9 +58,9 @@
     "indexer:test-target": "node scripts/test-indexer-target.mjs",
     "indexer:test-schema": "node scripts/test-indexer-schema.mjs",
     "indexer:test-postgres": "node scripts/test-indexer-postgres.mjs",
-    "server:test": "tsx scripts/test-server-runtime.ts && tsx scripts/test-route-planner.ts && tsx scripts/test-staging-policy.ts && tsx scripts/test-quote-signer.ts",
+    "server:test": "tsx scripts/test-server-runtime.ts && tsx scripts/test-indexer-health.ts && tsx scripts/test-route-planner.ts && tsx scripts/test-staging-policy.ts && tsx scripts/test-quote-signer.ts",
     "indexer:watch": "node scripts/run-with-env.cjs INDEXER_WATCH=1 -- node scripts/indexer.cjs",
-    "check": "eslint . --max-warnings=0 && tsc --noEmit && hardhat test && tsx scripts/test-server-runtime.ts && tsx scripts/test-route-planner.ts && tsx scripts/test-staging-policy.ts && tsx scripts/test-quote-signer.ts && tsx scripts/test-wallet-provider.ts && node scripts/test-release-gates.mjs && node scripts/test-release-assurance.mjs && node scripts/test-release-evidence.mjs && node scripts/test-operations-quote.mjs && node scripts/test-wallet-attestation.mjs && node scripts/test-public-staging-manifest.mjs && node scripts/test-v2-venue-review.mjs && node scripts/test-indexer-target.mjs && node scripts/test-indexer-schema.mjs && next build && node scripts/verify-production-bundle.cjs",
+    "check": "eslint . --max-warnings=0 && tsc --noEmit && hardhat test && tsx scripts/test-server-runtime.ts && tsx scripts/test-indexer-health.ts && tsx scripts/test-route-planner.ts && tsx scripts/test-staging-policy.ts && tsx scripts/test-quote-signer.ts && tsx scripts/test-wallet-provider.ts && node scripts/test-release-gates.mjs && node scripts/test-release-assurance.mjs && node scripts/test-release-evidence.mjs && node scripts/test-operations-quote.mjs && node scripts/test-wallet-attestation.mjs && node scripts/test-public-staging-manifest.mjs && node scripts/test-v2-venue-review.mjs && node scripts/test-indexer-target.mjs && node scripts/test-indexer-schema.mjs && next build && node scripts/verify-production-bundle.cjs",
     "contracts:export": "hardhat compile && node contracts/scripts/export-artifacts.cjs"
   },
   "dependencies": {

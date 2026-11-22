@@ -119,17 +119,17 @@ export default function RouteExplorer() {
               <label><span>To</span><select value={buySymbol} onChange={(event) => chooseBuy(event.target.value as LiveTokenSymbol)}>{LIVE_TOKENS.map((token) => <option key={token.symbol} value={token.symbol}>{token.displaySymbol}</option>)}</select></label>
               <button type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "Reading…" : "Refresh"}</button>
             </div>
-            <div className="catalog-tabs" role="tablist" aria-label="Route type filter">
-              {FILTERS.map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "multi" ? "Multi-hop" : item === "hook" ? "Verified hooks" : item.toUpperCase()}</button>)}
+            <div className="catalog-tabs" role="group" aria-label="Route type filter">
+              {FILTERS.map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} aria-pressed={filter === item} onClick={() => setFilter(item)}>{item === "all" ? "All valid" : item === "multi" ? "Multi-hop" : item === "hook" ? "Verified hooks" : item.toUpperCase()}</button>)}
             </div>
           </header>
 
           <div className="catalog-layout">
-            <div className="route-table" role="table" aria-label="Live route candidates">
-              <div className="route-table-head" role="row"><span>PAIR</span><span>ROUTE</span><span>LIVE OUTPUT</span><span>GAS EST.</span><span>TYPE</span></div>
-              {candidates.map((candidate, index) => <RouteRow key={candidate.routeId} candidate={candidate} index={index} active={candidate.routeId === active?.routeId} onSelect={() => setSelectedRoute(candidate.routeId)} input={inputToken} output={outputToken} fmt={fmt} />)}
-              {!candidates.length && <div className="route-filter-empty">{loading ? "Reading verified quoters…" : error || "No candidate passes this filter. Unavailable coverage is not fabricated."}</div>}
-            </div>
+          <div className="route-table" role="grid" aria-label="Live route candidates" tabIndex={0}>
+            <div className="route-table-head" role="row"><span role="columnheader">PAIR</span><span role="columnheader">ROUTE</span><span role="columnheader">LIVE OUTPUT</span><span role="columnheader">GAS EST.</span><span role="columnheader">TYPE</span></div>
+            {candidates.map((candidate, index) => <RouteRow key={candidate.routeId} candidate={candidate} index={index} active={candidate.routeId === active?.routeId} onSelect={() => setSelectedRoute(candidate.routeId)} input={inputToken} output={outputToken} fmt={fmt} />)}
+            {!candidates.length && <div className="route-filter-empty">{loading ? "Reading verified quoters…" : error || "No candidate passes this filter. Unavailable coverage is not fabricated."}</div>}
+          </div>
 
             {active ? <aside className="route-inspector" key={active.routeId}>
               <span className="section-kicker">SELECTED ROUTE</span>
@@ -168,10 +168,10 @@ function RouteRow({ candidate, index, active, onSelect, input, output, fmt }: {
   fmt: (raw?: string) => string;
 }) {
   return <button className={`route-table-row${active ? " selected" : ""}`} type="button" onClick={onSelect} style={{ "--row-delay": `${index * 45}ms` } as CSSProperties}>
-    <span className="pair-cell"><span className="live-pair"><LiveTokenMark token={input} size={27} /><LiveTokenMark token={output} size={27} /></span><b>{input.displaySymbol}/{output.displaySymbol}</b></span>
-    <span><b>{candidate.providerLabel}</b><small>{candidate.steps.length} step{candidate.steps.length > 1 ? "s" : ""} · {candidate.gasNormalized ? "gas normalized" : "gas separate"}</small></span>
-    <span className="mono-cell">{fmt(candidate.amountOut)} {output.displaySymbol}</span>
-    <span className="mono-cell">{Number(formatEther(BigInt(candidate.estimatedNetworkFeeWei))).toPrecision(3)} ETH</span>
-    <span><em className={`route-type ${candidate.verifiedHook ? "hook" : "direct"}`}>{candidate.routeKind.toUpperCase()}</em></span>
+    <span className="pair-cell" role="cell"><span className="live-pair"><LiveTokenMark token={input} size={27} /><LiveTokenMark token={output} size={27} /></span><b>{input.displaySymbol}/{output.displaySymbol}</b></span>
+    <span role="cell"><b>{candidate.providerLabel}</b><small>{candidate.steps.length} step{candidate.steps.length > 1 ? "s" : ""} · {candidate.gasNormalized ? "gas normalized" : "gas separate"}</small></span>
+    <span className="mono-cell" role="cell">{fmt(candidate.amountOut)} {output.displaySymbol}</span>
+    <span className="mono-cell" role="cell">{Number(formatEther(BigInt(candidate.estimatedNetworkFeeWei))).toPrecision(3)} ETH</span>
+    <span role="cell"><em className={`route-type ${candidate.verifiedHook ? "hook" : "direct"}`}>{candidate.routeKind.toUpperCase()}</em></span>
   </button>;
 }

@@ -309,7 +309,7 @@ export default function Landing() {
 
       <nav className={`journey-rail${pastJourney ? " hidden" : ""}`} aria-label="Perm journey">
         {stops.map((stop, index) => (
-          <button key={stop.label} type="button" className={index === activeStop ? "active" : ""} onClick={() => goTo(stop.p)}>
+          <button key={stop.label} type="button" className={index === activeStop ? "active" : ""} aria-label={`${stop.n} · ${stop.label.toUpperCase()}`} onClick={() => goTo(stop.p)}>
             <span>{stop.n} · {stop.label.toUpperCase()}</span><i />
           </button>
         ))}

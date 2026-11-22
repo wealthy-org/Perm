@@ -88,14 +88,16 @@ async function main() {
     "Hosted operations RPC block evidence is invalid");
   required(/^\d+$/.test(operations?.indexer?.lastIndexedBlock || "")
     && isHash(operations?.indexer?.lastIndexedBlockHash)
-    && Number.isSafeInteger(operations?.indexer?.updatedLagSeconds) && operations.indexer.updatedLagSeconds >= 0 && operations.indexer.updatedLagSeconds <= 900,
+    && Number.isSafeInteger(operations?.indexer?.updatedLagSeconds) && operations.indexer.updatedLagSeconds >= 0 && operations.indexer.updatedLagSeconds <= 900
+    && /^\d+$/.test(operations?.indexer?.blockLag || "")
+    && BigInt(operations.indexer.blockLag) <= 300n,
   "Hosted operations indexer evidence is invalid");
   required(isHash(operations?.executableQuoteId), "Hosted operations executable quote proof is invalid");
   required(isHash(operations?.verifiedReceipt)
     && String(operations.verifiedReceipt).toLowerCase() === String(candidate.e2eVerificationResults.directV4.transactionHash).toLowerCase(),
   "Hosted operations receipt does not match verified direct-v4 E2E evidence");
   const requiredSecurityHeaders = [
-    "content-security-policy", "strict-transport-security", "cross-origin-opener-policy", "permissions-policy", "x-content-type-options",
+    "content-security-policy", "strict-transport-security", "cross-origin-opener-policy", "permissions-policy", "x-content-type-options", "x-frame-options",
   ];
   required(Array.isArray(operations?.securityHeaders) && requiredSecurityHeaders.every((header) => operations.securityHeaders.includes(header)),
     "Hosted operations security-header evidence is incomplete");

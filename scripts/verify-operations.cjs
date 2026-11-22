@@ -100,7 +100,17 @@ async function main() {
     required(cursor && cursorHash, "Hosted indexer has no canonical cursor for the candidate router");
     const updatedLagSeconds = Math.max(0, Math.floor((Date.now() - new Date(cursor.updated_at).getTime()) / 1000));
     required(updatedLagSeconds <= 900, `Hosted indexer cursor is ${updatedLagSeconds}s old`);
-    indexer = { lastIndexedBlock: cursor.value, lastIndexedBlockHash: cursorHash.value, updatedLagSeconds };
+    const maxIndexerBlockLagRaw = process.env.OPERATIONS_MAX_INDEXER_BLOCK_LAG || "300";
+    required(/^\d+$/.test(maxIndexerBlockLagRaw) && Number(maxIndexerBlockLagRaw) <= 1_000_000,
+      "OPERATIONS_MAX_INDEXER_BLOCK_LAG must be an integer between 0 and 1,000,000");
+    const maxIndexerBlockLag = BigInt(maxIndexerBlockLagRaw);
+    required(/^\d+$/.test(cursor.value), "Hosted indexer cursor is not an integer block number");
+    const cursorBlock = BigInt(cursor.value);
+    required(primaryBlock >= cursorBlock, `Hosted indexer cursor ${cursor.value} is ahead of the primary RPC block ${primaryBlock}`);
+    const indexerBlockLag = primaryBlock - cursorBlock;
+    required(indexerBlockLag <= maxIndexerBlockLag,
+      `Hosted indexer is ${indexerBlockLag} blocks behind (limit ${maxIndexerBlockLag}; override with OPERATIONS_MAX_INDEXER_BLOCK_LAG)`);
+    indexer = { lastIndexedBlock: cursor.value, lastIndexedBlockHash: cursorHash.value, updatedLagSeconds, blockLag: indexerBlockLag.toString(), maxIndexerBlockLag: maxIndexerBlockLagRaw };
   } finally {
     await sql.end({ timeout: 2 });
   }
@@ -154,9 +164,14 @@ async function main() {
 
   const securityHeaders = [
     "content-security-policy", "strict-transport-security", "cross-origin-opener-policy",
-    "permissions-policy", "x-content-type-options",
+    "permissions-policy", "x-content-type-options", "x-frame-options",
   ];
   for (const header of securityHeaders) required(receiptResponse.headers.get(header), `Staging response is missing ${header}`);
+  const contentSecurityPolicy = receiptResponse.headers.get("content-security-policy") || "";
+  required(/(?:^|;)\s*frame-ancestors\s+'none'\s*(?:;|$)/i.test(contentSecurityPolicy),
+    "Staging CSP must deny framing with frame-ancestors 'none'");
+  required(receiptResponse.headers.get("x-frame-options")?.toUpperCase() === "DENY",
+    "Staging X-Frame-Options must be DENY");
 
   if (process.env.CONFIRM_ALERT_WEBHOOK_TEST === "SEND_TEST_ALERT") {
     const alertResponse = await fetch(process.env.PERM_ALERT_WEBHOOK_URL, {

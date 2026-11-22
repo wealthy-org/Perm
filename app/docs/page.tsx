@@ -85,12 +85,12 @@ export default function DocsPage() {
             <span className="section-kicker">TECHNICAL BOUNDARY</span>
             <h2>A router is not a hook</h2>
             <p>A v4 hook is attached to a pool through its <code>PoolKey</code>. Its callbacks run only when that pool is used and the callback permission exists. Changing the router does not attach a new Perm hook to an existing pool.</p>
-            <div className="boundary-table" role="table" aria-label="Router and hook responsibilities">
-              <div className="table-head"><span>RESPONSIBILITY</span><span>PERM ROUTER / SETTLEMENT</span><span>SPECIFIC V4 HOOK POOL</span></div>
-              <div><b>User bounds</b><span>Recipient, minimum output, deadline</span><span>Not the only global enforcement</span></div>
-              <div><b>Fee rebate</b><span>Gross fee, rebate, net fee</span><span>Only if that pool explicitly implements it</span></div>
-              <div><b>Proof</b><span>Router event and indexer</span><span>Callback detail when available</span></div>
-              <div><b>AMM behavior</b><span>Does not alter external venues</span><span>May implement dynamic LP fee or curve logic</span></div>
+            <div className="boundary-table" role="table" aria-label="Router and hook responsibilities" tabIndex={0}>
+              <div className="table-head" role="row"><span role="columnheader">RESPONSIBILITY</span><span role="columnheader">PERM ROUTER / SETTLEMENT</span><span role="columnheader">SPECIFIC V4 HOOK POOL</span></div>
+              <div role="row"><b role="cell">User bounds</b><span role="cell">Recipient, minimum output, deadline</span><span role="cell">Not the only global enforcement</span></div>
+              <div role="row"><b role="cell">Fee rebate</b><span role="cell">Gross fee, rebate, net fee</span><span role="cell">Only if that pool explicitly implements it</span></div>
+              <div role="row"><b role="cell">Proof</b><span role="cell">Router event and indexer</span><span role="cell">Callback detail when available</span></div>
+              <div role="row"><b role="cell">AMM behavior</b><span role="cell">Does not alter external venues</span><span role="cell">May implement dynamic LP fee or curve logic</span></div>
             </div>
             <div className="docs-callout warning">Never infer that a custom Perm callback ran only because a transaction touched v4.</div>
           </section>
@@ -99,12 +99,12 @@ export default function DocsPage() {
             <span className="section-kicker">B · PERM FEE REBATE</span>
             <h2>One versioned discount, settled instantly</h2>
             <p>The user rebate is an immediate reduction of Perm&apos;s own fee, so it needs no user claim, campaign points, staking, or second transaction. Treasury and referral fees use separate pull-payment reserves so a failing beneficiary cannot block the swap.</p>
-            <pre className="formula"><code>{`grossPermFee = floor(feeBasisAmount × platformFeeBps / 10,000)
+            <pre className="formula" tabIndex={0} aria-label="Fee formula"><code>{`grossPermFee = floor(feeBasisAmount × platformFeeBps / 10,000)
 rebate      = floor(grossPermFee × rebateShareBps / 10,000)
 netPermFee  = grossPermFee − rebate
 
 0 ≤ rebateShareBps ≤ 10,000`}</code></pre>
-            <div className="example-fee">
+            <div className="example-fee" tabIndex={0} role="region" aria-label="Net fee calculation example">
               <div><small>INPUT FIXTURE</small><b>100 USDG</b></div><i>→</i>
               <div><small>GROSS PERM FEE</small><b>0.20 USDG</b></div><i>−</i>
               <div className="green"><small>REBATE</small><b>0.05 USDG</b></div><i>=</i>

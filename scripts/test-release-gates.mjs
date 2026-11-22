@@ -123,6 +123,8 @@ try {
       lastIndexedBlock: "155000088",
       lastIndexedBlockHash: `0x${"33".repeat(32)}`,
       updatedLagSeconds: 12,
+      blockLag: "12",
+      maxIndexerBlockLag: "300",
     },
     healthStatus: "ready",
     executableQuoteId: `0x${"34".repeat(32)}`,
@@ -132,7 +134,7 @@ try {
     quoteSignerAddress: candidate.quoteSigner,
     recoveredQuoteSigner: candidate.quoteSigner,
     securityHeaders: [
-      "content-security-policy", "strict-transport-security", "cross-origin-opener-policy", "permissions-policy", "x-content-type-options",
+      "content-security-policy", "strict-transport-security", "cross-origin-opener-policy", "permissions-policy", "x-content-type-options", "x-frame-options",
     ],
     alertWebhookTest: "passed",
   };

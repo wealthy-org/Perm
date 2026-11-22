@@ -16,6 +16,7 @@ import {
 } from "@/lib/web3/config";
 import { permRouterAbi } from "@/lib/web3/abis";
 import { indexerHealth, indexedHistoryAvailable } from "@/lib/server/indexer";
+import { assessIndexerFreshness, indexerFreshnessLimits } from "@/lib/server/indexer-health";
 import { consumeRateLimit, requestIdentity, safeServerError } from "@/lib/server/runtime";
 import { quoteSignerConfiguration, quoteSignerExecutionReady } from "@/lib/server/quote-signer";
 import { allowlistedStagingConfiguration, isAllowlistedStagingWallet } from "@/lib/server/staging-policy";
@@ -72,12 +73,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     sharedRateLimitConfigured: Boolean(process.env.PERM_RATE_LIMIT_DATABASE_URL || process.env.DATABASE_URL || process.env.PERM_INDEXER_DATABASE_URL),
     sharedRateLimitRequired: process.env.PERM_REQUIRE_SHARED_RATE_LIMIT === "1",
     alertWebhookConfigured: Boolean(process.env.PERM_ALERT_WEBHOOK_URL),
+    alertWebhookRequired: process.env.PERM_REQUIRE_ALERT_WEBHOOK === "1",
+
     walletConnectConfigured: Boolean(process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID),
     quoteSignerConfigured: signer.configured,
     quoteSignerMode: signer.mode,
     quoteSignerCustodyReady: signer.custodyReady,
     quoteSignerMatchesOnchain: false,
     indexerHealthy: false,
+    indexerCanonical: false,
+    indexerFreshByBlock: false,
+    indexerFreshByTime: false,
   };
   const stagingChecks = {
     nonRelease: true,
@@ -116,6 +122,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     e2eRequiredConfirmations: stagingConfirmationRequirement()?.toString() || null,
   };
   let indexer: Awaited<ReturnType<typeof indexerHealth>> = undefined;
+  let indexerFreshness: ReturnType<typeof assessIndexerFreshness> | undefined;
   let blockNumber: string | null = null;
   let latestBlockNumber: bigint | undefined;
   const client = createRobinhoodPublicClient();
@@ -157,7 +164,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (checks.indexerConfigured) {
       indexer = await indexerHealth();
-      checks.indexerHealthy = Boolean(indexer?.lastIndexedBlock && indexer.lastIndexedBlockHash && indexer.updatedAt);
+      const limits = indexerFreshnessLimits(process.env, staging.requested);
+      indexerFreshness = assessIndexerFreshness(indexer, block.number, limits);
+      checks.indexerFreshByBlock = indexerFreshness.freshByBlock;
+      checks.indexerFreshByTime = indexerFreshness.freshByTime;
+      if (indexerFreshness.cursorNotAhead && indexer?.lastIndexedBlock && indexer.lastIndexedBlockHash) {
+        const cursorBlock = await client.getBlock({ blockNumber: BigInt(indexer.lastIndexedBlock) });
+        checks.indexerCanonical = Boolean(cursorBlock.hash
+          && cursorBlock.hash.toLowerCase() === indexer.lastIndexedBlockHash.toLowerCase());
+      }
+      checks.indexerHealthy = indexerFreshness.healthy && checks.indexerCanonical;
     }
   } catch (cause) {
     safeServerError("health", cause, "Health check failed");
@@ -239,6 +255,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       && stagingChecks.v4AdapterConfigured
       && stagingChecks.v3AdapterConfigured
       && checks.primaryRpc
+      && checks.fallbackRpcConfigured
+      && (!checks.indexerRequired || (checks.indexerConfigured && checks.indexerHealthy))
+      && (!checks.sharedRateLimitRequired || checks.sharedRateLimitConfigured)
+      && (!checks.alertWebhookRequired || checks.alertWebhookConfigured)
+      && checks.walletConnectConfigured
       && stagingChecks.routerCodePresent
       && stagingChecks.v4AdapterCodePresent
       && stagingChecks.v3AdapterCodePresent
@@ -269,7 +290,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     stagingReady,
     nonReleaseStaging: staging.requested,
     blockNumber,
-    indexer: indexer || null,
+    indexer: indexer ? {
+      ...indexer,
+      ...(indexerFreshness || {}),
+      canonical: checks.indexerCanonical,
+      healthy: checks.indexerHealthy,
+    } : null,
     checks,
     stagingChecks,
     stagingReason: staging.configured ? null : staging.reason || null,
