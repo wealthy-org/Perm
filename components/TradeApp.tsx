@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   formatEther,
   formatUnits,
+  getAddress,
   isAddress,
   parseEther,
   parseUnits,
@@ -45,6 +46,15 @@ type TxStatus = {
   hash?: Hex;
 };
 
+type ReferralStatus = "none" | "checking" | "active" | "invalid" | "unconfigured" | "error";
+
+type AllowanceState = {
+  account?: Address;
+  token?: Address;
+  router: bigint;
+  permit2: bigint;
+};
+
 const publicClient = getRobinhoodPublicClient();
 
 function randomPermitNonce() {
@@ -66,6 +76,10 @@ export default function TradeApp() {
   const [picker, setPicker] = useState<PickerSide>(null);
   const [tokenSearch, setTokenSearch] = useState("");
   const [recipient, setRecipient] = useState("");
+  const [referrer, setReferrer] = useState<Address>(ZERO_ADDRESS);
+  const [referralStatus, setReferralStatus] = useState<ReferralStatus>("none");
+  const [referralShareBps, setReferralShareBps] = useState(0);
+  const [allowances, setAllowances] = useState<AllowanceState>({ router: 0n, permit2: 0n });
   const [quote, setQuote] = useState<LiveQuote>();
   const [quoteError, setQuoteError] = useState<string>();
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -81,6 +95,60 @@ export default function TradeApp() {
   const recipientAddress = recipient.trim() || account || "";
   const recipientValid = Boolean(recipientAddress && isAddress(recipientAddress));
   const slippageBps = Math.round(slippage * 100);
+  const hasReferral = referrer !== ZERO_ADDRESS;
+  const selfReferral = Boolean(account && hasReferral && account.toLowerCase() === referrer.toLowerCase());
+  const referralReady = referralStatus === "none" || referralStatus === "active";
+  const referralIssue = selfReferral
+    ? "Self-referral is not permitted. Open the trade page without your own referral link."
+    : referralStatus === "invalid"
+      ? "The referral link contains an invalid address."
+      : referralStatus === "unconfigured"
+        ? "This address is not an active Router referral. No referral quote was created."
+        : referralStatus === "error"
+          ? "The referral could not be verified against the Router."
+          : undefined;
+
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get("referrer")?.trim();
+    if (!raw) {
+      setReferrer(ZERO_ADDRESS);
+      setReferralStatus("none");
+      return;
+    }
+    if (!isAddress(raw)) {
+      setReferrer(ZERO_ADDRESS);
+      setReferralStatus("invalid");
+      return;
+    }
+    const address = getAddress(raw);
+    if (address === ZERO_ADDRESS) {
+      setReferrer(ZERO_ADDRESS);
+      setReferralStatus("invalid");
+      return;
+    }
+    setReferrer(address);
+    setReferralStatus("checking");
+  }, []);
+
+  useEffect(() => {
+    if (!hasReferral || !deployment.router) return;
+    let cancelled = false;
+    setReferralStatus("checking");
+    void publicClient.readContract({
+      address: deployment.router,
+      abi: permRouterAbi,
+      functionName: "referralShares",
+      args: [referrer],
+    }).then((share) => {
+      if (cancelled) return;
+      const bps = Number(share);
+      setReferralShareBps(bps);
+      setReferralStatus(bps > 0 ? "active" : "unconfigured");
+    }).catch(() => {
+      if (!cancelled) setReferralStatus("error");
+    });
+    return () => { cancelled = true; };
+  }, [deployment.router, hasReferral, referrer]);
 
   const parsedAmount = useMemo(() => {
     try {
@@ -119,6 +187,33 @@ export default function TradeApp() {
   }, [refreshBalances]);
 
   useEffect(() => {
+    let cancelled = false;
+    if (!account || !deployment.router || sellToken.address === ZERO_ADDRESS) {
+      setAllowances({ account, token: sellToken.address, router: 0n, permit2: 0n });
+      return;
+    }
+    void Promise.all([
+      publicClient.readContract({
+        address: sellToken.address,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, deployment.router],
+      }),
+      publicClient.readContract({
+        address: sellToken.address,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, deployment.permit2 || PERMIT2_ADDRESS],
+      }),
+    ]).then(([router, permit2]) => {
+      if (!cancelled) setAllowances({ account, token: sellToken.address, router, permit2 });
+    }).catch(() => {
+      if (!cancelled) setAllowances({ account, token: sellToken.address, router: 0n, permit2: 0n });
+    });
+    return () => { cancelled = true; };
+  }, [account, deployment.permit2, deployment.router, quoteTick, sellToken.address]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => setQuoteTick((value) => value + 1), 25_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -150,8 +245,9 @@ export default function TradeApp() {
   useEffect(() => {
     setQuote(undefined);
     setQuoteError(undefined);
-    if (!parsedAmount || slippageBps < 1 || slippageBps > 2_000) {
+    if (!parsedAmount || slippageBps < 1 || slippageBps > 2_000 || !referralReady || selfReferral) {
       setQuoteLoading(false);
+      if (referralIssue) setQuoteError(referralIssue);
       return;
     }
     setQuoteLoading(true);
@@ -168,7 +264,7 @@ export default function TradeApp() {
             slippageBps,
             account: account || ZERO_ADDRESS,
             recipient: recipientValid ? recipientAddress : ZERO_ADDRESS,
-            referrer: ZERO_ADDRESS,
+            referrer,
             routingMode,
           }),
           signal: controller.signal,
@@ -189,7 +285,7 @@ export default function TradeApp() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [sellSymbol, buySymbol, parsedAmount, slippageBps, routingMode, quoteTick, account, recipientAddress, recipientValid]);
+  }, [sellSymbol, buySymbol, parsedAmount, slippageBps, routingMode, quoteTick, account, recipientAddress, recipientValid, referralIssue, referralReady, referrer, selfReferral]);
 
   const quoteMatchesInput = Boolean(
     quote
@@ -199,7 +295,8 @@ export default function TradeApp() {
       && quote.slippageBps === slippageBps
       && quote.routingMode === routingMode
       && account && quote.account.toLowerCase() === account.toLowerCase()
-      && recipientValid && quote.recipient.toLowerCase() === recipientAddress.toLowerCase(),
+      && recipientValid && quote.recipient.toLowerCase() === recipientAddress.toLowerCase()
+      && quote.referrer.toLowerCase() === referrer.toLowerCase(),
   );
 
   const gasReserve = quote ? BigInt(quote.selected.estimatedNetworkFeeWei) * 5n / 4n : parseEther("0.00002");
@@ -210,6 +307,19 @@ export default function TradeApp() {
   const tokenBalanceEnough = balancesReady && sellBalance !== undefined && sellBalance >= parsedAmount;
   const gasBalanceEnough = balancesReady && nativeBalance !== undefined && nativeBalance >= requiredNative;
   const balanceEnough = tokenBalanceEnough && gasBalanceEnough;
+  const allowancesCurrent = Boolean(
+    account
+      && allowances.account?.toLowerCase() === account.toLowerCase()
+      && allowances.token?.toLowerCase() === sellToken.address.toLowerCase(),
+  );
+  const permit2Ready = sellToken.address !== ZERO_ADDRESS
+    && allowancesCurrent
+    && parsedAmount > 0n
+    && allowances.permit2 >= parsedAmount;
+  const routerAllowanceReady = sellToken.address !== ZERO_ADDRESS
+    && allowancesCurrent
+    && parsedAmount > 0n
+    && allowances.router >= parsedAmount;
 
   const formatTokenAmount = (raw: string | bigint | undefined, token: LiveToken, maximum = 6) => {
     if (raw === undefined) return "—";
@@ -452,6 +562,9 @@ export default function TradeApp() {
                   ? "Router v2 execution · testnet assets have no monetary value"
                   : "Router v1 is read-only · deploy and publish v2 before execution"
             }</div>
+            {referralStatus === "checking" && <div className="referral-banner checking"><i /><span>Verifying referral against Router v2…</span></div>}
+            {referralStatus === "active" && <div className="referral-banner active"><i /><span>Referral active</span><code>{referrer.slice(0, 8)}…{referrer.slice(-6)}</code><b>{(referralShareBps / 100).toFixed(2).replace(/\.00$/, "")}% of net fee</b></div>}
+            {referralIssue && <div className="referral-banner invalid"><i /><span>{referralIssue}</span></div>}
 
             <div className="mode-tabs" role="group" aria-label="Routing mode">
               <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Best net result</button>
@@ -494,6 +607,22 @@ export default function TradeApp() {
 
             <div className="slippage-row"><span>Slippage tolerance</span><div>{[0.1, 0.5, 1].map((value) => <button key={value} type="button" className={slippage === value ? "active" : ""} onClick={() => setSlippage(value)}>{value}%</button>)}<label className="custom-slippage"><input type="number" min="0.01" max="20" step="0.01" value={slippage} onChange={(event) => setSlippage(Math.min(20, Math.max(0.01, Number(event.target.value) || 0.01)))} /><span>%</span></label></div></div>
             <label className="permit-toggle"><input type="checkbox" checked={preferPermit2} onChange={(event) => setPreferPermit2(event.target.checked)} /><span>Use Permit2 signature when an allowance is available</span></label>
+            <div className={`permit-readiness${sellToken.address === ZERO_ADDRESS || permit2Ready || (!preferPermit2 && routerAllowanceReady) ? " ready" : ""}`}>
+              <i />
+              <span>{sellToken.address === ZERO_ADDRESS
+                ? "Native input: no token approval required."
+                : !account
+                  ? "Connect a wallet to inspect Permit2 and Router allowances."
+                  : !allowancesCurrent
+                    ? "Checking Permit2 and PermRouter allowances…"
+                    : preferPermit2
+                      ? permit2Ready
+                        ? "Permit2 ready: the next token authorization is an offchain signature."
+                        : "One-time exact Permit2 approval is required before signature-only transfer."
+                      : routerAllowanceReady
+                        ? "Exact PermRouter allowance is ready."
+                        : "An exact PermRouter approval will be required before the swap."}</span>
+            </div>
             {account && balancesReady && !balanceEnough && <div className="transaction-status error"><i /><span>{!tokenBalanceEnough ? `Insufficient ${sellToken.displaySymbol} balance.` : "Insufficient ETH for the reserved network gas."}</span></div>}
             {quote?.selected.priceImpactBps !== undefined && quote.selected.priceImpactBps >= 100 && <div className="transaction-status error"><i /><span>High estimated price impact: {(quote.selected.priceImpactBps / 100).toFixed(2)}%. Reduce size or review another route.</span></div>}
             {account && quoteError && <div className="transaction-status error"><i /><span>{quoteError}</span></div>}

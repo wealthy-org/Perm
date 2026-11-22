@@ -6,6 +6,7 @@ import Header from "./Header";
 import AudioToggle from "./AudioToggle";
 import Footer from "./Footer";
 import LiveTokenMark from "./LiveTokenMark";
+import FeeClaims from "./FeeClaims";
 import { permRouterAbi } from "@/lib/web3/abis";
 import { getRobinhoodPublicClient } from "@/lib/web3/config";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
@@ -73,6 +74,7 @@ export default function RebateCalculator() {
           <h1>The exact discount, before signing.</h1>
           <p>Values are read from the active deployed policy and calculated in token base units with the same rounding used by settlement.</p>
           <div className={`data-disclaimer${policy?.source === "onchain" ? " verified-policy" : ""}`}><i /> {policy ? policy.source === "onchain" ? `Policy v${version} read from Router v2` : "Legacy policy v1 read from the current router; execution waits for v2" : deployment.router ? "Reading the active fee policy from chain" : "Router deployment is not configured"}</div>
+          <a className="claims-jump" href="#claims">View referral and treasury claims ↓</a>
         </header>
 
         <section className="rebate-workbench data-panel">
@@ -93,6 +95,7 @@ export default function RebateCalculator() {
             <p>Rebate never exceeds gross Perm fee. Pool, hook-provider, protocol and network fees remain separate.</p>
           </div>
         </section>
+        <FeeClaims />
       </section>
       <div className="footer-shell app-footer"><Footer /></div>
     </main>

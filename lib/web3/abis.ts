@@ -68,6 +68,7 @@ export const permRouterAbi = parseAbi([
   "function setPauseGuardian(address newGuardian)",
   "function permit2() view returns (address)",
   "function treasury() view returns (address)",
+  "function referralShares(address referrer) view returns (uint16)",
   "function claimableFees(address token,address beneficiary) view returns (uint256)",
   "function claimFees(address token,address recipient) returns (uint256 amount)",
   "function configureAdapter(address adapter,bytes32 providerId,bool enabled)",
