@@ -55,7 +55,7 @@ export default function DocsPage() {
               <article><span>03</span><h3>Synthra V3 adapter</h3><p>Immutable reviewed Router02 and WETH targets, native wrapping, approved fee tiers, exact allowances, codehash checks, and no arbitrary calldata.</p></article>
             </div>
             <div className="docs-callout"><b>Verified against live fork state:</b> tests execute both directions through the real v4 PoolManager and Synthra v3 router, including an actual Permit2 signature transfer.</div>
-            <div className="docs-callout warning"><b>Release boundary:</b> the shared manifest still points to Router v1, so v2 quotes remain read-only until candidate verification, governance acceptance, and explicit promotion. No Aggregator Hook deployment has been established on chain 46630.</div>
+            <div className="docs-callout"><b>Release boundary:</b> PermRouter v2 is live on testnet chain 46630 and accepts signed quotes. Execution gating (executionReady) and official deployment (deploymentReady) remain pending governance acceptance and explicit promotion. No Aggregator Hook deployment has been established on chain 46630.</div>
           </section>
 
           <section className="docs-section">
