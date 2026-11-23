@@ -49,6 +49,7 @@ contract PermWethAdapter is IPermAdapter, ReentrancyGuard {
         if (msg.sender != address(weth)) revert InvalidCaller();
     }
 
+    // slither-disable-next-line cyclomatic-complexity
     function swapExactInput(
         address tokenIn,
         address tokenOut,

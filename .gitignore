@@ -20,3 +20,5 @@ deployments/*.staging.json
 
 .vercel
 .env*
+
+scripts/d3-*.cjs
