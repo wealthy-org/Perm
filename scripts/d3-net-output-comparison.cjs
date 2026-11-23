@@ -6,7 +6,7 @@
  * Read-only — tidak membutuhkan private key atau transaksi baru.
  */
 
-const { createPublicClient, http, parseAbi, defineChain, getAddress } = require("viem");
+const { createPublicClient, http, parseAbi, defineChain } = require("viem");
 
 const CHAIN_ID = 46630;
 const RPC_URL = "https://rpc.testnet.chain.robinhood.com";
@@ -23,19 +23,6 @@ const client = createPublicClient({
 
 // Alamat dari deployment v2-staging
 const PERM_ROUTER = "0xFdC667735C8998fEB83C4c3c7B4eCFB404DAFA87";
-const V4_QUOTER = "0x8dc178efb8111bb0973dd9d722ebeff267c98f94";
-const V3_QUOTER_V2 = "0x231606c321A99DE81e28fE48B07a93F1ba49e713";
-const POOL_MANAGER = "0x8366a39CC670B4001A1121B8F6A443A643e40951";
-
-// Token addresses (chain 46630)
-const TOKENS = {
-  ETH: "0x0000000000000000000000000000000000000000",
-  NVDA: "0x3ab049897b0697BdA766D8730fe1F955c9c103F0",
-  TSLA: "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
-  WETH: "0xC02aaa39b223fe8d0A0e5C4F27eAD9083C756Cc2",
-};
-
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 // 8 transaksi dari deployment manifest (testnet 46630)
 const TRANSACTIONS = [
@@ -55,14 +42,6 @@ const permRouterAbi = parseAbi([
   "function previewFees(uint256 amountIn,uint32 policyVersion) view returns (uint256 grossFee,uint256 rebate,uint256 netFee,uint256 routedInput)",
   "function activePolicyVersion() view returns (uint32)",
   "function feePolicies(uint32 version) view returns (uint16 platformFeeBps,uint16 rebateShareBps,bool enabled,bool exists)",
-]);
-
-const v4QuoterAbi = parseAbi([
-  "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)",
-]);
-
-const v3QuoterAbi = parseAbi([
-  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
 ]);
 
 function fmtWei(wei, decimals = 18) {

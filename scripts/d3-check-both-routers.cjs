@@ -71,7 +71,7 @@ async function scanRouter(routerAddress, label) {
   console.log(`ROUTER ${label}: ${routerAddress}`);
   console.log("=".repeat(80));
 
-  const policyVersion = await getFeePolicy(routerAddress, label);
+  await getFeePolicy(routerAddress, label);
   console.log("");
 
   const results = [];
@@ -80,7 +80,7 @@ async function scanRouter(routerAddress, label) {
     let receipt;
     try {
       receipt = await client.getTransactionReceipt({ hash: tx.hash });
-    } catch (e) {
+    } catch {
       console.log(`\n--- ${tx.label} --- Gagal ambil receipt`);
       continue;
     }
@@ -184,7 +184,6 @@ async function main() {
   if (v2Results) allResults.push(...v2Results.map(r => ({...r, router: "V2"})));
 
   for (const r of allResults) {
-    const pair = `${r.tokenIn.slice(0,6)}...${r.tokenIn.slice(-4)} → ${r.tokenOut.slice(0,6)}...${r.tokenOut.slice(-4)}`;
     console.log(`${r.router.padEnd(10)} | ${r.label.padEnd(22)} | ${r.type.padEnd(10)} | ${fmtWei(r.amountIn).padEnd(14)} | ${fmtWei(r.amountOut).padEnd(14)} | ${fmtWei(r.netFee).padEnd(12)} | ${r.gasUsed.padEnd(10)}`);
   }
 
