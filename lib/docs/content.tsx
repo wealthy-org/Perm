@@ -21,11 +21,15 @@ type ManifestExtras = {
   referrals?: { referrer: string; shareBpsOfNetFee: number }[];
   contracts?: Record<string, { address: string; runtimeCodehash?: string }>;
   feePolicy?: { publishedInTx?: string };
-  deploymentTransactions?: { label: string; hash: string }[];
+  deploymentTransactions?: ({ label?: string; hash?: string } | string)[];
   venues: { uniswapV3?: { swapRouter02: string; factory: string; quoterV2: string } | null; synthraV3?: { swapRouter02: string } | null };
 };
 
 const M = MANIFEST as typeof MANIFEST & ManifestExtras;
+// Mainnet stores { label, hash }; the older testnet manifest stores bare hashes. Accept both, drop anything else.
+const DEPLOY_TXS = (M.deploymentTransactions || [])
+  .map((entry, index) => typeof entry === "string" ? { label: `Deployment transaction ${index + 1}`, hash: entry } : { label: entry?.label || `Deployment transaction ${index + 1}`, hash: entry?.hash || "" })
+  .filter((entry) => /^0x[0-9a-fA-F]{64}$/.test(entry.hash));
 const EXPLORER = M.explorerUrl.replace(/\/$/, "");
 const POLICY = M.policy;
 const GROSS_PCT = (POLICY.platformFeeBps / 100).toFixed(2);
@@ -58,7 +62,8 @@ function Addr({ value, label }: { value?: string | null; label?: string }) {
   return <a className="pd-addr" href={`${EXPLORER}/address/${value}`} target="_blank" rel="noopener noreferrer"><code>{label || value}</code> ↗</a>;
 }
 
-function Tx({ hash }: { hash: string }) {
+function Tx({ hash }: { hash?: string | null }) {
+  if (!hash) return <span className="pd-muted">not recorded</span>;
   return <a className="pd-addr" href={`${EXPLORER}/tx/${hash}`} target="_blank" rel="noopener noreferrer"><code>{hash.slice(0, 10)}…{hash.slice(-8)}</code> ↗</a>;
 }
 
@@ -662,12 +667,12 @@ const build: DocPage[] = [
           ...(M.weth ? [["WETH", <Addr key="w" value={M.weth} />]] : []),
         ]} />,
       },
-      ...(M.deploymentTransactions?.length ? [{
+      ...(DEPLOY_TXS.length ? [{
         id: "deployment",
         title: "Deployment transactions",
         body: <>
-          <Table head={["Step", "Transaction"]} rows={M.deploymentTransactions.map((tx) => [tx.label, <Tx key={tx.hash} hash={tx.hash} />])} />
-          <p>Deployed at block {M.deploymentBlock}{M.deploymentCommitSha ? <> from commit <code>{M.deploymentCommitSha.slice(0, 7)}</code></> : null}. The full record is <code>deployments/robinhood-mainnet.json</code> in the repository.</p>
+          <Table head={["Step", "Transaction"]} rows={DEPLOY_TXS.map((tx) => [tx.label, <Tx key={tx.hash} hash={tx.hash} />])} />
+          <p>Deployed at block {M.deploymentBlock}{M.deploymentCommitSha ? <> from commit <code>{M.deploymentCommitSha.slice(0, 7)}</code></> : null}. The full record is <code>{IS_MAINNET ? "deployments/robinhood-mainnet.json" : "deployments/robinhood-testnet.json"}</code> in the repository.</p>
         </>,
       }] : []),
     ],
