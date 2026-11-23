@@ -36,7 +36,8 @@ export async function GET(request: NextRequest) {
   if (indexedHistoryAvailable()) {
     try {
       const indexed = await readIndexedHistory(account, requestedBefore, 50);
-      if (indexed) return NextResponse.json({
+            // An indexer that has never indexed this chain + router (e.g. a fresh mainnet deploy) falls back to router logs.
+      if (indexed && indexed.indexedThrough) return NextResponse.json({
         items: indexed.items,
         indexedThrough: indexed.indexedThrough,
         nextBefore: indexed.nextBefore,
