@@ -25,19 +25,19 @@
       "address": "0x155bc06240dE046112e86C63a35f8b954AF32Ea2",
       "runtimeCodehash": "0x01f1a8f4781311e7331fa9d70b7f03f390da30411b5ade105635f8d2f4ba5cdf",
       "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x155bc06240dE046112e86C63a35f8b954AF32Ea2?tab=contract",
-      "sourceVerification": "failed"
+      "sourceVerification": "verified"
     },
     "v4Adapter": {
       "address": "0xee94ED044B7F1ec935A62109e172BCEf42A62E1A",
       "runtimeCodehash": "0x9be1b5722f9a472267c5751971c8463f95f429b52ec47bc4975581aad78ebd1a",
       "explorerUrl": "https://robinhoodchain.blockscout.com/address/0xee94ED044B7F1ec935A62109e172BCEf42A62E1A?tab=contract",
-      "sourceVerification": "failed"
+      "sourceVerification": "verified"
     },
     "v3Adapter": {
       "address": "0x8925caAD31C3a1ef66E41B7988a1d2b43Bb382E9",
       "runtimeCodehash": "0x5901832cbc981e4583e3006966a84d8fb0af4ef38ab3e5c15336471a41c0615f",
       "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x8925caAD31C3a1ef66E41B7988a1d2b43Bb382E9?tab=contract",
-      "sourceVerification": "failed"
+      "sourceVerification": "verified"
     }
   },
   "dependencies": {
@@ -107,7 +107,7 @@
     "rebateShareBps": 2500,
     "publishedInTx": "0xea5fea8c1f4134d9fd5597b855c4890b1ed012f9d93bc7732bebf9549318f46c"
   },
-  "sourceVerification": "partial",
+  "sourceVerification": "verified",
   "releaseStatus": "allowlisted-mainnet",
   "nonRelease": true,
   "executionReady": false,
