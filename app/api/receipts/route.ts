@@ -12,6 +12,7 @@ import { permRouterAbi, permRouterV1Abi } from "@/lib/web3/abis";
 import {
   PERM_ROUTER_ADDRESS,
   PERM_CHAIN_ID,
+  PERM_EXPLORER,
   ROUTER_VERSION,
   createRobinhoodPublicClient,
 } from "@/lib/web3/config";
@@ -195,7 +196,7 @@ export async function GET(request: NextRequest) {
       effectiveGasPrice: receipt.effectiveGasPrice.toString(),
       actualNetworkFeeWei: (receipt.gasUsed * receipt.effectiveGasPrice).toString(),
       actualNetworkFeeEth: formatEther(receipt.gasUsed * receipt.effectiveGasPrice),
-      explorerUrl: `https://explorer.testnet.chain.robinhood.com/tx/${receipt.transactionHash}`,
+      explorerUrl: `${PERM_EXPLORER.replace(/\/$/, "")}/tx/${receipt.transactionHash}`,
     };
     return NextResponse.json({ transaction, settlements }, { headers: { "cache-control": "public, max-age=15, stale-while-revalidate=30" } });
   } catch (cause) {
