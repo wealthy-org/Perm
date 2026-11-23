@@ -104,7 +104,7 @@ export default function FeatureStack() {
                 <div className="feature-meta"><span>{feature.eyebrow}</span><b>{feature.tag}</b></div>
                 <h3>{feature.title}</h3>
                 <p>{feature.copy}</p>
-                <Link href="/docs" className="text-link">Read the implementation notes <span>↗</span></Link>
+                <Link href="/docs" className="text-link">Read the docs <span>↗</span></Link>
               </div>
             </article>
           ))}
@@ -130,7 +130,7 @@ export default function FeatureStack() {
           <p>{IS_MAINNET ? "Router v2 is live on Robinhood Chain. Every settlement links to Blockscout." : "Explore the interface preview while execution contracts and verified integrations are finalized."}</p>
           <div className="button-row">
             <Link className="button primary" href="/trade">{IS_MAINNET ? "Open router" : "Open router preview"}</Link>
-            <Link className="button secondary" href="/docs">Read protocol notes</Link>
+            <Link className="button secondary" href="/docs">Read the docs</Link>
           </div>
         </div>
       </div>

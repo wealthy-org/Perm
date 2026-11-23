@@ -95,7 +95,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <h2>Only venues that exist on this chain</h2>
         <p>On Robinhood Chain, Perm quotes Uniswap v4 direct pools without hooks and Uniswap v3 pools that passed a liquidity check. Nothing else is labelled as a route.</p>
         <div className="tag-row"><span>chain</span><span>adapter</span><span>pool</span><span>freshness</span></div>
-        <Link className="card-link" href="/docs#hooks">Understand the boundary</Link>
+        <Link className="card-link" href="/docs/hooks">Understand the boundary</Link>
       </>
     ) : (
       <>
@@ -103,7 +103,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <h2>Verified hooks, never hook-by-label</h2>
         <p>A hook callback exists only when its pool is actually used. Perm verifies deployment and execution details before a hook candidate can enter comparison.</p>
         <div className="tag-row"><span>chain</span><span>spender</span><span>target</span><span>freshness</span></div>
-        <Link className="card-link" href="/docs#hooks">Understand the boundary</Link>
+        <Link className="card-link" href="/docs/hooks">Understand the boundary</Link>
       </>
     ),
   },
@@ -128,7 +128,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <p>Enter a transparent router experience designed around comparable quotes, a visible fee discount, and proof after execution.</p>
         <div className="button-row card-buttons">
           <Link className="button primary" href="/trade">{IS_MAINNET ? "Open router" : "Launch preview"}</Link>
-          <Link className="button secondary" href="/docs">Read the brief</Link>
+          <Link className="button secondary" href="/docs">Read the docs</Link>
         </div>
       </>
     ),

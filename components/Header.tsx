@@ -20,7 +20,7 @@ const BASE_MENU = [
   ["/routes", "Route explorer", "02"],
   ["/rebate", "Fee rebate", "03"],
   ["/proofs", "Settlement proof", "04"],
-  ["/docs", "Protocol notes", "05"],
+  ["/docs", "Docs", "05"],
 ] as const;
 // The browser-wallet setup page is a testnet tool; a mainnet build never links to it.
 const MENU = IS_MAINNET ? BASE_MENU : [...BASE_MENU, ["/setup", "Testnet setup", "06"] as const];

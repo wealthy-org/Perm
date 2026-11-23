@@ -25,7 +25,7 @@ export default function Footer() {
         </div>
         <div>
           <h4>BUILD</h4>
-          <Link href="/docs">Protocol notes</Link>
+          <Link href="/docs">Docs</Link>
           {!IS_MAINNET && <Link href="/setup">Testnet setup</Link>}
           <a href="https://github.com/wealthy-org/Perm" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
           <a href="https://developers.uniswap.org/docs/protocols/v4/concepts/hooks" target="_blank" rel="noopener noreferrer">Uniswap v4 hooks ↗</a>
