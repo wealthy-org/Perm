@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 
 export type SceneStop = { n: string; label: string; p: number; a: number };
 export type SceneController = {
@@ -177,21 +178,131 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
   });
 
   // ---------- water ----------
-  // A fog-aware physical surface avoids the dark grazing-angle seam produced
-  // by planar reflection render targets at the opening horizon.
-  const waterBase = new THREE.Mesh(
-    new THREE.PlaneGeometry(5000, 5000),
-    new THREE.MeshPhysicalMaterial({
-      color: 0x8bb9c9,
-      roughness: 0.3,
-      metalness: 0.08,
-      clearcoat: 0.58,
-      clearcoatRoughness: 0.2,
-    }),
-  );
-  waterBase.rotation.x = -Math.PI / 2;
-  waterBase.position.set(0, -0.06, -100);
-  scene.add(waterBase);
+  // Planar reflection with a rippled, distance-faded lookup. The reflection
+  // fades into a view-angle water colour well before the horizon, so the dark
+  // grazing-angle seam of a raw planar reflection never reaches the screen.
+  const reflectionScale = mobile ? 0.4 : 0.6;
+  const reflectionSize = () => ({
+    width: Math.max(256, Math.round(innerWidth * dpr * reflectionScale)),
+    height: Math.max(256, Math.round(innerHeight * dpr * reflectionScale)),
+  });
+  const initialReflectionSize = reflectionSize();
+  const waterReflector = new Reflector(new THREE.PlaneGeometry(5000, 5000), {
+    textureWidth: initialReflectionSize.width,
+    textureHeight: initialReflectionSize.height,
+    color: 0xffffff,
+    clipBias: 0.003,
+    multisample: 0,
+    shader: {
+      name: "PermWaterReflector",
+      uniforms: THREE.UniformsUtils.merge([
+        THREE.UniformsLib.fog,
+        {
+          color: { value: null },
+          tDiffuse: { value: null },
+          textureMatrix: { value: null },
+          uTime: { value: 0 },
+          uDeep: { value: new THREE.Color(0x1d5f78) },
+          uShallow: { value: new THREE.Color(0x6aa9bb) },
+          uSunColor: { value: new THREE.Color(0xfff1d6) },
+          uSunDirection: { value: sunDirection.clone() },
+          uRipple: { value: reducedMotion ? 0.55 : 1 },
+        },
+      ]),
+      vertexShader: `
+        uniform mat4 textureMatrix;
+        varying vec4 vReflectUv;
+        varying vec3 vWorld;
+        #include <common>
+        #include <fog_pars_vertex>
+        #include <logdepthbuf_pars_vertex>
+        void main() {
+          vReflectUv = textureMatrix * vec4(position, 1.0);
+          vec4 world = modelMatrix * vec4(position, 1.0);
+          vWorld = world.xyz;
+          vec4 mvPosition = viewMatrix * world;
+          gl_Position = projectionMatrix * mvPosition;
+          #include <logdepthbuf_vertex>
+          #include <fog_vertex>
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 color;
+        uniform sampler2D tDiffuse;
+        uniform float uTime;
+        uniform vec3 uDeep;
+        uniform vec3 uShallow;
+        uniform vec3 uSunColor;
+        uniform vec3 uSunDirection;
+        uniform float uRipple;
+        varying vec4 vReflectUv;
+        varying vec3 vWorld;
+        #include <common>
+        #include <fog_pars_fragment>
+        #include <logdepthbuf_pars_fragment>
+
+        // Analytic slope of a few travelling sine waves: cheap, seamless ripples.
+        vec2 waveSlope(vec2 p, float t) {
+          vec2 s = vec2(0.0);
+          s += vec2(0.62, 0.24) * cos(dot(p, vec2(0.62, 0.24)) + t * 1.05);
+          s += vec2(-0.30, 0.86) * cos(dot(p, vec2(-0.30, 0.86)) - t * 0.88);
+          s += vec2(1.70, -1.10) * 0.32 * cos(dot(p, vec2(1.70, -1.10)) + t * 1.62);
+          s += vec2(0.95, 2.30) * 0.22 * cos(dot(p, vec2(0.95, 2.30)) - t * 1.94);
+          s += vec2(0.11, 0.07) * 4.0 * cos(dot(p, vec2(0.11, 0.07)) + t * 0.32);
+          return s;
+        }
+
+        void main() {
+          #include <logdepthbuf_fragment>
+          vec3 toCamera = cameraPosition - vWorld;
+          float dist = length(toCamera);
+          vec3 viewDir = toCamera / dist;
+
+          vec2 slope = waveSlope(vWorld.xz, uTime) * uRipple;
+          vec3 normal = normalize(vec3(-slope.x * 0.07, 1.0, -slope.y * 0.07));
+
+          // Reflection: ripple the projected lookup, less with distance.
+          float distortion = 0.042 / (1.0 + dist * 0.03);
+          vec4 reflectUv = vReflectUv;
+          // Horizontal wobble reads as rippled, vertically stretched reflections.
+          reflectUv.x += slope.x * distortion * 1.7 * reflectUv.w;
+          reflectUv.y += slope.y * distortion * 0.7 * reflectUv.w;
+          vec3 reflection = texture2DProj(tDiffuse, reflectUv).rgb;
+          // Water absorbs the pale sky: tint it blue and push contrast so the
+          // colonnade and causeway reflections read as darker shapes.
+          reflection = pow(reflection, vec3(1.35)) * vec3(0.62, 0.84, 0.94);
+
+          float facing = clamp(dot(normal, viewDir), 0.0, 1.0);
+          float fresnel = 0.2 + 0.8 * pow(1.0 - facing, 3.0);
+          vec3 body = mix(uDeep, uShallow, smoothstep(0.0, 0.85, 1.0 - viewDir.y));
+          float fade = 1.0 - smoothstep(140.0, 460.0, dist);
+          vec3 waterColor = mix(body, reflection, clamp(mix(0.5, 0.86, fresnel), 0.0, 0.86) * fade);
+
+          // Sun glints and soft ripple highlights.
+          vec3 halfVector = normalize(uSunDirection + viewDir);
+          float glint = pow(max(dot(normal, halfVector), 0.0), 260.0);
+          waterColor += uSunColor * glint * 1.6 * fade;
+          // Fine sparkle along the sun path.
+          vec2 fine = waveSlope(vWorld.xz * 3.1 + 17.0, uTime * 1.7) * uRipple;
+          vec3 fineNormal = normalize(vec3(-(slope.x + fine.x) * 0.09, 1.0, -(slope.y + fine.y) * 0.09));
+          float sparkle = pow(max(dot(fineNormal, halfVector), 0.0), 900.0);
+          waterColor += uSunColor * sparkle * 1.2 * fade;
+          float band = sin(vWorld.z * 1.45 + sin(vWorld.x * 0.62 + uTime * 0.55) * 1.9 + uTime * 0.7);
+          waterColor += vec3(0.92, 1.0, 0.98) * smoothstep(0.978, 1.0, band) * 0.11 * fade * uRipple;
+
+          gl_FragColor = vec4(waterColor * color, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+          #include <fog_fragment>
+        }
+      `,
+    },
+  });
+  const waterReflectorMaterial = waterReflector.material as THREE.ShaderMaterial;
+  waterReflectorMaterial.fog = true;
+  waterReflector.rotation.x = -Math.PI / 2;
+  waterReflector.position.set(0, -0.04, -100);
+  scene.add(waterReflector);
 
   const waterOverlayMaterial = new THREE.ShaderMaterial({
     transparent: true,
@@ -673,6 +784,8 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
     camera.aspect = innerWidth / innerHeight;
     camera.fov = innerWidth / innerHeight < 0.78 ? 61 : 46;
     camera.updateProjectionMatrix();
+    const size = reflectionSize();
+    waterReflector.getRenderTarget().setSize(size.width, size.height);
   };
   addEventListener("pointermove", onPointer, { passive: true });
   addEventListener("resize", resize, { passive: true });
@@ -703,6 +816,7 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
     camera.lookAt(cameraLook);
     sky.position.copy(camera.position);
     waterOverlayMaterial.uniforms.uTime.value = elapsed;
+    waterReflectorMaterial.uniforms.uTime.value = elapsed;
     if (!reducedMotion) animated.forEach((animate) => animate(elapsed));
     renderer.render(scene, camera);
     frameId = requestAnimationFrame(render);
@@ -726,6 +840,7 @@ export function createPermScene(canvas: HTMLCanvasElement, options: SceneOptions
         materials.forEach((material) => material?.dispose?.());
       });
       textures.forEach((texture) => texture.dispose());
+      waterReflector.dispose();
       renderer.dispose();
     },
   };
