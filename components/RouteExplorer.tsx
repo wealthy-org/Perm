@@ -8,12 +8,16 @@ import Footer from "./Footer";
 import LiveTokenMark from "./LiveTokenMark";
 import { LIVE_TOKENS, LIVE_TOKEN_MAP, type LiveTokenSymbol } from "@/lib/web3/tokens";
 import type { LiveQuote, LiveQuoteCandidate } from "@/lib/web3/quote";
-import { REVIEWED_V2_CLIENT_ENABLED, RH_TESTNET_EXPLORER, ZERO_ADDRESS } from "@/lib/web3/config";
+import { AGGREGATOR_HOOKS_CLIENT_ENABLED, IS_MAINNET, PERM_CHAIN_ID, REVIEWED_V2, REVIEWED_V2_CLIENT_ENABLED, PERM_EXPLORER, V3_VENUE, ZERO_ADDRESS } from "@/lib/web3/config";
 
 type Filter = "all" | "v4" | "v3" | "v2" | "multi" | "cross" | "hook";
-const FILTERS: Filter[] = REVIEWED_V2_CLIENT_ENABLED
-  ? ["all", "v4", "v3", "v2", "multi", "cross", "hook"]
-  : ["all", "v4", "v3", "multi", "cross", "hook"];
+const HOOK_FILTER_VISIBLE = IS_MAINNET ? AGGREGATOR_HOOKS_CLIENT_ENABLED : true;
+const FILTERS: Filter[] = [
+  "all", "v4", "v3",
+  ...(REVIEWED_V2_CLIENT_ENABLED ? ["v2" as const] : []),
+  "multi", "cross",
+  ...(HOOK_FILTER_VISIBLE ? ["hook" as const] : []),
+];
 
 export default function RouteExplorer() {
   const [filter, setFilter] = useState<Filter>("all");
@@ -71,8 +75,8 @@ export default function RouteExplorer() {
   }, [refresh]);
 
   const candidates = useMemo(() => (quote?.candidates || []).filter((candidate) => {
-    if (filter === "v3") return candidate.steps.some((step) => step.providerId === "SYNTHRA_V3");
-    if (filter === "v2") return candidate.steps.some((step) => step.providerId === "REVIEWED_V2_THIRD_PARTY");
+    if (filter === "v3") return candidate.steps.some((step) => step.providerId === "SYNTHRA_V3" || step.providerId === "UNISWAP_V3");
+    if (filter === "v2") return candidate.steps.some((step) => step.providerId === "REVIEWED_V2_THIRD_PARTY" || step.providerId === "UNISWAP_V2");
     if (filter === "multi") return candidate.steps.length > 1;
     if (filter === "cross") return candidate.routeKind === "cross-venue";
     if (filter === "hook") return candidate.verifiedHook;
@@ -98,10 +102,12 @@ export default function RouteExplorer() {
       <div className="app-aurora" aria-hidden="true"><i /><i /><i /><b /><b /></div>
       <section className="data-shell app-enter">
         <header className="data-hero">
-          <span className="section-kicker">MULTI-VENUE ROUTE EXPLORER · CHAIN 46630</span>
+          <span className="section-kicker">MULTI-VENUE ROUTE EXPLORER · CHAIN {PERM_CHAIN_ID}</span>
           <h1>Compare the route, not the label.</h1>
-          <p>The same exact input is quoted across reviewed Uniswap v4 and Synthra v3 pools. Token-to-token paths may use two venue steps through ETH, and gas is normalized only when a valid conversion exists.{REVIEWED_V2_CLIENT_ENABLED ? " A separately gated third-party V2 path is also enabled." : " Third-party V2 remains withheld by the venue-admission gate."}</p>
-          <div className="data-disclaimer"><i /> Hook candidates remain unavailable unless deployment, runtime codehash, pool and quote all verify onchain</div>
+          <p>The same exact input is quoted across reviewed Uniswap v4 and {V3_VENUE.shortLabel} pools. Token-to-token paths may use two venue steps through ETH, and gas is normalized only when a valid conversion exists.{IS_MAINNET
+            ? `${REVIEWED_V2_CLIENT_ENABLED ? ` ${REVIEWED_V2.shortLabel} pools are also compared.` : ""}${AGGREGATOR_HOOKS_CLIENT_ENABLED ? " Codehash-pinned v4 Aggregator Hook pools are reached through a 1:1 ETH→WETH wrap step." : ""}`
+            : REVIEWED_V2_CLIENT_ENABLED ? " A separately gated third-party V2 path is also enabled." : " Third-party V2 remains withheld by the venue-admission gate."}</p>
+          <div className="data-disclaimer"><i /> {IS_MAINNET ? "Only hookless Uniswap v4 pools and Uniswap v3 pools that passed a liquidity check are quoted on Robinhood Chain" : "Hook candidates remain unavailable unless deployment, runtime codehash, pool and quote all verify onchain"}</div>
         </header>
 
         <div className="metric-row">
@@ -145,7 +151,7 @@ export default function RouteExplorer() {
                 <div><dt>Hook claim</dt><dd>{active.verifiedHook ? active.hook : "None"}</dd></div>
               </dl>
               <section className="inspector-steps">{active.steps.map((step, index) => <div key={`${active.routeId}-${index}`}><b>{index + 1}. {step.providerLabel}</b><span>{step.tokenIn === ZERO_ADDRESS ? "ETH" : `${step.tokenIn.slice(0, 6)}…`} → {step.tokenOut === ZERO_ADDRESS ? "ETH" : `${step.tokenOut.slice(0, 6)}…`}</span><small>pool {step.poolId.slice(0, 12)}… · {step.poolFee / 10_000}%</small></div>)}</section>
-              <a href={`${RH_TESTNET_EXPLORER}/address/${active.steps[0].adapter}`} target="_blank" rel="noopener noreferrer">Inspect adapter ↗</a>
+              <a href={`${PERM_EXPLORER}/address/${active.steps[0].adapter}`} target="_blank" rel="noopener noreferrer">Inspect adapter ↗</a>
               <small>The trade page requests an account-bound EIP-712 signature and simulates this exact route immediately before submission.</small>
             </aside> : <aside className="route-inspector"><span className="section-kicker">NO VALID QUOTE</span><h3>{error || "Reading verified quoters…"}</h3></aside>}
           </div>

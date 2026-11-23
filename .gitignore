@@ -15,6 +15,7 @@ coverage.json
 playwright-report/
 test-results/
 deployments/*.rehearsal.json
+deployments/**/*.rehearsal.json
 deployments/*.staging.json
 
 .vercel

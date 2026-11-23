@@ -1,5 +1,5 @@
 import type { Address, Hex } from "viem";
-import poolRegistry from "@/deployments/v4-pools.json";
+import { POOL_REGISTRY as poolRegistry } from "@/lib/web3/network";
 
 export type V4PoolFixture = {
   id: Hex;
@@ -13,9 +13,11 @@ export type V4PoolFixture = {
   initializationBlock: number;
 };
 
-/** Persistent, event-discovered PoolManager registry. Hooked pools are excluded by
- * discovery unless their hook address was explicitly approved by operations. */
-export const RH_TESTNET_V4_POOLS: readonly V4PoolFixture[] = poolRegistry.pools.map((pool) => ({
+/** Persistent PoolManager registry for the active chain. Testnet: event-discovered
+ * (deployments/v4-pools.json). Mainnet: liquidity-admitted, hookless native-ETH pools only
+ * (deployments/mainnet/v4-pools.json, built by scripts/mainnet/build-pool-registry.mjs).
+ * Hooked pools are excluded unless their hook address was explicitly approved by operations. */
+export const ACTIVE_V4_POOLS: readonly V4PoolFixture[] = poolRegistry.pools.map((pool) => ({
   id: pool.id as Hex,
   currency0: pool.currency0 as Address,
   currency1: pool.currency1 as Address,
@@ -26,11 +28,13 @@ export const RH_TESTNET_V4_POOLS: readonly V4PoolFixture[] = poolRegistry.pools.
   sourceType: pool.sourceType === "verified-hook" ? "aggregator-hook" : "direct",
   initializationBlock: pool.initializationBlock,
 }));
+/** @deprecated kept for older imports; the registry now follows NEXT_PUBLIC_PERM_CHAIN_ID. */
+export const RH_TESTNET_V4_POOLS = ACTIVE_V4_POOLS;
 
 export function tokenPairPools(tokenIn: Address, tokenOut: Address) {
   const input = tokenIn.toLowerCase();
   const output = tokenOut.toLowerCase();
-  return RH_TESTNET_V4_POOLS.filter((pool) => {
+  return ACTIVE_V4_POOLS.filter((pool) => {
     const zero = pool.currency0.toLowerCase();
     const one = pool.currency1.toLowerCase();
     return (zero === input && one === output) || (zero === output && one === input);

@@ -1,6 +1,6 @@
 import postgres, { type Sql } from "postgres";
 import type { Address } from "viem";
-import { PERM_ROUTER_ADDRESS, RH_TESTNET_CHAIN_ID } from "@/lib/web3/config";
+import { PERM_ROUTER_ADDRESS, PERM_CHAIN_ID } from "@/lib/web3/config";
 
 type GlobalIndexer = typeof globalThis & { __permIndexerSql?: Sql };
 const connectionString = process.env.DATABASE_URL || process.env.PERM_INDEXER_DATABASE_URL;
@@ -39,7 +39,7 @@ export async function readIndexedHistory(
       token_in,token_out,amount_in,routed_input,amount_out,gross_fee,rebate,net_fee,referral_fee,treasury_fee,
       policy_version,route_id,route_hash,legacy
     FROM perm_settlements
-    WHERE chain_id=${RH_TESTNET_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()}
+    WHERE chain_id=${PERM_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()}
       ${accountFilter} ${cursorFilter}
     ORDER BY block_number DESC,log_index DESC
     LIMIT ${Math.max(1, Math.min(limit, 100))}
@@ -70,7 +70,7 @@ export async function readIndexedHistory(
   }));
   const stateRows = await sql<Array<{ value: string }>>`
     SELECT value FROM perm_indexer_state
-    WHERE chain_id=${RH_TESTNET_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()} AND key='lastIndexedBlock'
+    WHERE chain_id=${PERM_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()} AND key='lastIndexedBlock'
   `;
   return {
     items,
@@ -86,7 +86,7 @@ export async function indexerHealth() {
   if (!sql || !PERM_ROUTER_ADDRESS) return undefined;
   const rows = await sql<Array<{ key: string; value: string; updated_at: Date }>>`
     SELECT key,value,updated_at FROM perm_indexer_state
-    WHERE chain_id=${RH_TESTNET_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()}
+    WHERE chain_id=${PERM_CHAIN_ID} AND router=${PERM_ROUTER_ADDRESS.toLowerCase()}
       AND key IN ('lastIndexedBlock','lastIndexedBlockHash','lastReorgDetectedAt')
   `;
   const values = new Map(rows.map((row) => [row.key, row]));

@@ -11,7 +11,7 @@ import {
 import { permRouterAbi, permRouterV1Abi } from "@/lib/web3/abis";
 import {
   PERM_ROUTER_ADDRESS,
-  RH_TESTNET_CHAIN_ID,
+  PERM_CHAIN_ID,
   ROUTER_VERSION,
   createRobinhoodPublicClient,
 } from "@/lib/web3/config";
@@ -26,6 +26,7 @@ const PROVIDERS: Record<string, string> = {
   [keccak256(toHex("UNISWAP_V4_DIRECT"))]: "Uniswap v4 direct pool",
   [keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"))]: "Verified v4 Aggregator Hook",
   [keccak256(toHex("SYNTHRA_V3"))]: "Synthra v3 pool",
+  [keccak256(toHex("UNISWAP_V3"))]: "Uniswap v3 pool",
   [keccak256(toHex("REVIEWED_V2_THIRD_PARTY"))]: "Source-reviewed third-party V2 pool",
 };
 
@@ -180,7 +181,7 @@ export async function GET(request: NextRequest) {
     }
 
     const transaction = {
-      chainId: RH_TESTNET_CHAIN_ID,
+      chainId: PERM_CHAIN_ID,
       routerVersion: ROUTER_VERSION,
       router: routerAddress as Address,
       transactionHash: receipt.transactionHash,

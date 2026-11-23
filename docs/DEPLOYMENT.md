@@ -1,5 +1,7 @@
 # Router v2 · Robinhood Chain testnet release runbook
 
+> Robinhood Chain **mainnet 4663** (allowlisted showcase mode): see [`MAINNET_RUNBOOK.md`](MAINNET_RUNBOOK.md). This document covers the testnet release-candidate process.
+
 ## Network and current public state
 
 - Chain ID: `46630`

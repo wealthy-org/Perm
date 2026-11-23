@@ -14,9 +14,9 @@ import { runtimeMatchesArtifact } from "@/lib/web3/bytecode";
 import {
   PERMIT2_ADDRESS,
   POOL_MANAGER_ADDRESS,
-  RH_TESTNET_CHAIN_ID,
-  RH_TESTNET_EXPLORER,
-  SYNTHRA_V3,
+  PERM_CHAIN_ID,
+  PERM_EXPLORER,
+  V3_VENUE,
   getRobinhoodPublicClient,
 } from "@/lib/web3/config";
 import {
@@ -66,8 +66,8 @@ export default function DeploymentSetup() {
       const targetCodes = await Promise.all([
         publicClient.getCode({ address: POOL_MANAGER_ADDRESS }),
         publicClient.getCode({ address: PERMIT2_ADDRESS }),
-        publicClient.getCode({ address: SYNTHRA_V3.swapRouter02 }),
-        publicClient.getCode({ address: SYNTHRA_V3.weth }),
+        publicClient.getCode({ address: V3_VENUE.swapRouter02 }),
+        publicClient.getCode({ address: V3_VENUE.weth }),
       ]);
       if (targetCodes.some((code) => !code || code === "0x")) throw new Error("A required immutable venue target has no bytecode on chain 46630");
       const wallet = walletClient();
@@ -93,7 +93,7 @@ export default function DeploymentSetup() {
 
       setStep("v3");
       setMessage("Deploy immutable Synthra SwapRouter02 adapter.");
-      const v3Hash = await wallet.deployContract({ account, chain: wallet.chain, abi: v3Artifact.abi as Abi, bytecode: v3Artifact.bytecode as Hex, args: [account, router, SYNTHRA_V3.swapRouter02, SYNTHRA_V3.weth] });
+      const v3Hash = await wallet.deployContract({ account, chain: wallet.chain, abi: v3Artifact.abi as Abi, bytecode: v3Artifact.bytecode as Hex, args: [account, router, V3_VENUE.swapRouter02, V3_VENUE.weth] });
       setTransactions((current) => [...current, v3Hash]);
       const v3Receipt = await publicClient.waitForTransactionReceipt({ hash: v3Hash });
       if (v3Receipt.status !== "success" || !v3Receipt.contractAddress) throw new Error("PermV3Adapter deployment reverted");
@@ -104,7 +104,7 @@ export default function DeploymentSetup() {
       const v4ConfigHash = await wallet.writeContract({ account, chain: wallet.chain, address: router, abi: permRouterAbi, functionName: "configureAdapter", args: [v4Adapter, keccak256(toHex("UNISWAP_V4_DIRECT")), true] });
       setTransactions((current) => [...current, v4ConfigHash]);
       if ((await publicClient.waitForTransactionReceipt({ hash: v4ConfigHash })).status !== "success") throw new Error("V4 adapter configuration reverted");
-      const v3ConfigHash = await wallet.writeContract({ account, chain: wallet.chain, address: router, abi: permRouterAbi, functionName: "configureAdapter", args: [v3Adapter, keccak256(toHex("SYNTHRA_V3")), true] });
+      const v3ConfigHash = await wallet.writeContract({ account, chain: wallet.chain, address: router, abi: permRouterAbi, functionName: "configureAdapter", args: [v3Adapter, keccak256(toHex(V3_VENUE.providerId)), true] });
       setTransactions((current) => [...current, v3ConfigHash]);
       if ((await publicClient.waitForTransactionReceipt({ hash: v3ConfigHash })).status !== "success") throw new Error("V3 adapter configuration reverted");
       // Hook execution remains disabled. A governed configureHookProvider call is
@@ -144,10 +144,10 @@ export default function DeploymentSetup() {
       if (signer.toLowerCase() !== quoteSigner.toLowerCase()) throw new Error("Onchain quote signer mismatch");
       if (guardian.toLowerCase() !== account.toLowerCase() || routerTreasury.toLowerCase() !== treasury.toLowerCase() || routerPermit2.toLowerCase() !== PERMIT2_ADDRESS.toLowerCase()) throw new Error("Router immutable/admin configuration mismatch");
       if (v4Router.toLowerCase() !== router.toLowerCase() || v4PoolManager.toLowerCase() !== POOL_MANAGER_ADDRESS.toLowerCase()) throw new Error("V4 adapter immutable configuration mismatch");
-      if (v3Router.toLowerCase() !== router.toLowerCase() || v3SwapRouter.toLowerCase() !== SYNTHRA_V3.swapRouter02.toLowerCase() || v3Weth.toLowerCase() !== SYNTHRA_V3.weth.toLowerCase()) throw new Error("V3 adapter immutable configuration mismatch");
+      if (v3Router.toLowerCase() !== router.toLowerCase() || v3SwapRouter.toLowerCase() !== V3_VENUE.swapRouter02.toLowerCase() || v3Weth.toLowerCase() !== V3_VENUE.weth.toLowerCase()) throw new Error("V3 adapter immutable configuration mismatch");
 
       const record: LocalPermDeployment = {
-        chainId: RH_TESTNET_CHAIN_ID,
+        chainId: PERM_CHAIN_ID,
         routerVersion: 2,
         permRouter: router,
         v4Adapter,
@@ -179,9 +179,9 @@ export default function DeploymentSetup() {
       schemaVersion: 2,
       network: "Robinhood Chain Testnet",
       rpcUrl: "https://rpc.testnet.chain.robinhood.com",
-      explorerUrl: RH_TESTNET_EXPLORER,
+      explorerUrl: PERM_EXPLORER,
       poolManager: POOL_MANAGER_ADDRESS,
-      synthraV3: SYNTHRA_V3,
+      synthraV3: V3_VENUE,
       ...deployment.local,
       sourceVerification: "pending",
     }, null, 2)}\n`], { type: "application/json" });
@@ -220,7 +220,7 @@ export default function DeploymentSetup() {
           const complete = step === "complete" || order.indexOf(step) > order.indexOf(id);
           return <article key={id} className={`${complete ? "complete" : ""}${step === id ? " active" : ""}`}><b>{complete ? "✓" : number}</b><div><h3>{title}</h3><p>{copy}</p></div></article>;
         })}
-          {transactions.length > 0 && <div className="setup-transactions"><span>TRANSACTIONS</span>{transactions.map((hash) => <a key={hash} href={`${RH_TESTNET_EXPLORER}/tx/${hash}`} target="_blank" rel="noopener noreferrer">{hash.slice(0, 12)}…{hash.slice(-8)} ↗</a>)}</div>}
+          {transactions.length > 0 && <div className="setup-transactions"><span>TRANSACTIONS</span>{transactions.map((hash) => <a key={hash} href={`${PERM_EXPLORER}/tx/${hash}`} target="_blank" rel="noopener noreferrer">{hash.slice(0, 12)}…{hash.slice(-8)} ↗</a>)}</div>}
           {deployment.ready && deployment.router && <div className="setup-result"><b>{deployment.local ? "DEVELOPMENT V2 ACTIVE" : "SHARED ROUTER V2 MANIFEST"}</b><code>Router {shortAddress(deployment.router)}</code><code>V4 {shortAddress(deployment.v4Adapter)}</code><code>V3 {shortAddress(deployment.v3Adapter)}</code>{deployment.local && <div><button type="button" onClick={exportManifest}>Export v2 manifest</button><button type="button" onClick={() => { clearLocalDeployment(); setStep("idle"); setMessage(undefined); }}>Forget local config</button></div>}<small>{deployment.local ? "Local state is development-only and never overrides production." : "Execution is enabled only when the shared manifest reports Router v2."}</small></div>}
         </div>
       </section>

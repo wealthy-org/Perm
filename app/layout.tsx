@@ -11,7 +11,7 @@ export const metadata: Metadata = {
     template: "%s · Perm",
   },
   description:
-    "Hook-aware swap routing with a transparent Perm fee rebate and verifiable settlement receipts.",
+    "Multi-venue swap routing with a transparent Perm fee rebate and verifiable settlement receipts.",
   openGraph: {
     title: "Perm — Compare routes. See every fee.",
     description:
@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     operatingSystem: "Web",
     url: siteUrl,
     description:
-      "A swap routing interface with hook-aware route candidates, transparent fee rebate accounting, and settlement receipts.",
+      "A swap routing interface with signed multi-venue route candidates, transparent fee rebate accounting, and settlement receipts.",
   };
 
   return (

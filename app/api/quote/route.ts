@@ -10,20 +10,23 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import deployment from "@/deployments/robinhood-testnet.json";
+import { MANIFEST as deployment } from "@/lib/web3/network";
 import {
   ALLOWLISTED_STAGING_BUILD,
+  IS_MAINNET,
   RELEASE_DEPLOYMENT_READY,
   STAGING_DEPLOYMENT_CONFIGURED,
   PERM_ROUTER_ADDRESS,
   PERM_V2_ADAPTER_ADDRESS,
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
+  PERM_WETH_ADAPTER_ADDRESS,
+  MAINNET_AGGREGATOR_HOOKS_ENABLED,
   REVIEWED_V2,
   REVIEWED_V2_STAGING_ENABLED,
-  RH_TESTNET_CHAIN_ID,
+  PERM_CHAIN_ID,
   ROUTER_VERSION,
-  SYNTHRA_V3,
+  V3_VENUE,
   V4_QUOTER_ADDRESS,
   ZERO_ADDRESS,
   createRobinhoodPublicClient,
@@ -40,7 +43,7 @@ import {
 } from "@/lib/web3/abis";
 import { tokenPairPools, type V4PoolFixture } from "@/lib/server/pools";
 import { discoverTwoStepRoutes, isExplicitV4V3Route } from "@/lib/server/route-planner";
-import { LIVE_TOKEN_MAP, LIVE_TOKENS, type LiveToken, type LiveTokenSymbol } from "@/lib/web3/tokens";
+import { HUB_TOKEN_MAP, LIVE_TOKEN_MAP, LIVE_TOKENS, ROUTE_HUB_TOKENS, type LiveToken, type LiveTokenSymbol } from "@/lib/web3/tokens";
 import type { LiveQuote, LiveQuoteCandidate, QuoteRouteStep } from "@/lib/web3/quote";
 import { RequestBodyTooLargeError, consumeRateLimit, readJsonBody, requestIdentity, safeServerError, ttlCached } from "@/lib/server/runtime";
 import { PERM_QUOTE_TYPES, quoteSignerConfiguration, quoteSignerExecutionReady, signPermQuote } from "@/lib/server/quote-signer";
@@ -100,10 +103,19 @@ function routeDataFor(steps: InternalStep[]): Hex {
 }
 
 function configuredHookPools(): V4PoolFixture[] {
-  if (ALLOWLISTED_STAGING_BUILD || allowlistedStagingConfiguration().requested) return [];
-  const override = process.env.PERM_AGGREGATOR_HOOKS_JSON;
-  if (override && override.length > 65_536) throw new Error("PERM_AGGREGATOR_HOOKS_JSON is too large");
-  const parsed = override ? JSON.parse(override) : deployment.aggregatorHooks || [];
+  let parsed: unknown;
+  if (IS_MAINNET) {
+    // Mainnet: only the manifest list (written by deploy-mainnet.cjs from deployments/mainnet/aggregator-hooks.json),
+    // only behind PERM_MAINNET_ENABLE_AGGREGATOR_HOOKS=1, never from an env override. Each hook is additionally
+    // re-checked against the codehash pinned on PermV4Adapter for every quote (v4Step).
+    if (!MAINNET_AGGREGATOR_HOOKS_ENABLED) return [];
+    parsed = deployment.aggregatorHooks || [];
+  } else {
+    if (ALLOWLISTED_STAGING_BUILD || allowlistedStagingConfiguration().requested) return [];
+    const override = process.env.PERM_AGGREGATOR_HOOKS_JSON;
+    if (override && override.length > 65_536) throw new Error("PERM_AGGREGATOR_HOOKS_JSON is too large");
+    parsed = override ? JSON.parse(override) : deployment.aggregatorHooks || [];
+  }
   if (!Array.isArray(parsed) || parsed.length > 32) throw new Error("Aggregator Hook configuration is invalid");
   const entries = parsed as Array<Partial<V4PoolFixture>>;
   return entries.filter((entry): entry is V4PoolFixture => Boolean(
@@ -161,11 +173,15 @@ export async function POST(request: NextRequest) {
 
   const staging = allowlistedStagingConfiguration();
   const stagingRequested = ALLOWLISTED_STAGING_BUILD || staging.requested;
-  if (stagingRequested && routingMode === "hooks") {
-    return error("Aggregator Hook routing is disabled in allowlisted staging; use a reviewed direct v4 or Synthra v3 route", 422);
+  // Testnet staging keeps hooks off; mainnet allows only the codehash-pinned manifest hooks behind an explicit flag.
+  const hooksAllowed = IS_MAINNET ? MAINNET_AGGREGATOR_HOOKS_ENABLED : !stagingRequested;
+  if (routingMode === "hooks" && !hooksAllowed) {
+    return error(`Aggregator Hook routing is disabled on this deployment; use a direct Uniswap v4 or ${V3_VENUE.shortLabel} route`, 422);
   }
   if (routingMode === "v2" && (!stagingRequested || !REVIEWED_V2_STAGING_ENABLED || !PERM_V2_ADAPTER_ADDRESS)) {
-    return error("Third-party V2 routing is withheld pending provenance, activity and liquidity admission gates", 422);
+    return error(IS_MAINNET
+      ? "Uniswap v2 routing is not enabled on this deployment"
+      : "Third-party V2 routing is withheld pending provenance, activity and liquidity admission gates", 422);
   }
   if (stagingRequested && account !== ZERO_ADDRESS) {
     if (!staging.configured) return error(staging.reason || "Allowlisted staging is not configured", 503);
@@ -286,7 +302,7 @@ export async function POST(request: NextRequest) {
       const aggregator = pool.sourceType === "aggregator-hook";
       return {
         providerId: aggregator ? "UNISWAP_V4_AGGREGATOR_HOOK" : "UNISWAP_V4_DIRECT",
-        providerLabel: aggregator ? "Verified v4 Aggregator Hook" : "Uniswap v4 direct pool",
+        providerLabel: aggregator ? (IS_MAINNET ? "v4 Aggregator Hook (codehash-pinned)" : "Verified v4 Aggregator Hook") : "Uniswap v4 direct pool",
         adapter: PERM_V4_ADAPTER_ADDRESS,
         tokenIn: input.address,
         tokenOut: output.address,
@@ -304,24 +320,33 @@ export async function POST(request: NextRequest) {
     };
 
     const v3Pool = async (input: LiveToken, output: LiveToken, fee: number) => {
-      const actualIn = input.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : input.address;
-      const actualOut = output.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : output.address;
+      const actualIn = input.address === ZERO_ADDRESS ? V3_VENUE.weth : input.address;
+      const actualOut = output.address === ZERO_ADDRESS ? V3_VENUE.weth : output.address;
       if (actualIn.toLowerCase() === actualOut.toLowerCase()) return ZERO_ADDRESS;
-      return ttlCached(`v3pool:${actualIn}:${actualOut}:${fee}`, 60_000, () => client.readContract({
-        address: SYNTHRA_V3.factory,
-        abi: v3FactoryAbi,
-        functionName: "getPool",
-        args: [actualIn, actualOut, fee],
-      }));
+      // A v3 pool address is CREATE2-derived and permanent once created, so a hit is cached for a day and a miss
+      // for five minutes. Two-step discovery probes ~140 (pair, fee) combinations; re-reading them on every quote
+      // would trip the public RPC rate limit (HTTP 429) and silently drop candidates.
+      const key = `v3pool:${actualIn}:${actualOut}:${fee}`;
+      const hit = await ttlCached(`${key}:hit`, 86_400_000, async () => {
+        const pool = await ttlCached(`${key}:miss`, 300_000, () => client.readContract({
+          address: V3_VENUE.factory,
+          abi: v3FactoryAbi,
+          functionName: "getPool",
+          args: [actualIn, actualOut, fee],
+        }));
+        if (pool === ZERO_ADDRESS) throw new Error("v3 pool not created");
+        return pool;
+      }).catch(() => ZERO_ADDRESS);
+      return hit as Address;
     };
 
     const quoteV3Raw = async (input: LiveToken, output: LiveToken, fee: number, amount: bigint): Promise<RawQuote> => {
-      const actualIn = input.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : input.address;
-      const actualOut = output.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : output.address;
+      const actualIn = input.address === ZERO_ADDRESS ? V3_VENUE.weth : input.address;
+      const actualOut = output.address === ZERO_ADDRESS ? V3_VENUE.weth : output.address;
       return ttlCached(`v3quote:${actualIn}:${actualOut}:${fee}:${amount}`, 2_000, async () => {
         const { result } = await client.simulateContract({
           account: ZERO_ADDRESS,
-          address: SYNTHRA_V3.quoterV2,
+          address: V3_VENUE.quoterV2,
           abi: v3QuoterAbi,
           functionName: "quoteExactInputSingle",
           args: [{ tokenIn: actualIn, tokenOut: actualOut, amountIn: amount, fee, sqrtPriceLimitX96: 0n }],
@@ -335,12 +360,12 @@ export async function POST(request: NextRequest) {
       if (!PERM_V3_ADAPTER_ADDRESS || await v3Pool(input, output, fee) === ZERO_ADDRESS) return null;
       const raw = await quoteV3Raw(input, output, fee, amount);
       const data = encodeAbiParameters(parseAbiParameters("uint24,uint160"), [fee, 0n]);
-      const actualIn = input.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : input.address;
-      const actualOut = output.address === ZERO_ADDRESS ? SYNTHRA_V3.weth : output.address;
+      const actualIn = input.address === ZERO_ADDRESS ? V3_VENUE.weth : input.address;
+      const actualOut = output.address === ZERO_ADDRESS ? V3_VENUE.weth : output.address;
       const pool = await v3Pool(input, output, fee);
       return {
-        providerId: "SYNTHRA_V3",
-        providerLabel: "Synthra v3 pool",
+        providerId: V3_VENUE.providerId,
+        providerLabel: V3_VENUE.label,
         adapter: PERM_V3_ADAPTER_ADDRESS,
         tokenIn: input.address,
         tokenOut: output.address,
@@ -397,6 +422,9 @@ export async function POST(request: NextRequest) {
         const reserveIn = forward ? reserves[0] : reserves[1];
         const reserveOut = forward ? reserves[1] : reserves[0];
         if (reserveIn <= 0n || reserveOut <= 0n) throw new Error("Empty V2 reserves");
+        // Mainnet: most Uniswap V2 stock pairs hold dust. Refuse any hop that would move more than 3% of the
+        // input-side reserve instead of presenting a near-empty pair as a route candidate.
+        if (IS_MAINNET && amount * 100n > reserveIn * 3n) throw new Error("V2 pair too shallow for this amount");
         const amountInWithFee = amount * REVIEWED_V2.feeNumerator;
         const amountOut = amountInWithFee * reserveOut
           / (reserveIn * REVIEWED_V2.feeDenominator + amountInWithFee);
@@ -412,8 +440,8 @@ export async function POST(request: NextRequest) {
       const actualIn = input.address === ZERO_ADDRESS ? REVIEWED_V2.weth : input.address;
       const actualOut = output.address === ZERO_ADDRESS ? REVIEWED_V2.weth : output.address;
       return {
-        providerId: "REVIEWED_V2_THIRD_PARTY",
-        providerLabel: "Source-reviewed third-party V2 pool",
+        providerId: REVIEWED_V2.providerId,
+        providerLabel: REVIEWED_V2.label,
         adapter: PERM_V2_ADAPTER_ADDRESS,
         tokenIn: input.address,
         tokenOut: output.address,
@@ -431,6 +459,32 @@ export async function POST(request: NextRequest) {
       };
     };
 
+    // 1:1 ETH <-> WETH step (PermWethAdapter). Only used to reach WETH-denominated Aggregator Hook pools.
+    const wethHub = HUB_TOKEN_MAP.WETH;
+    const wrapStep = (input: LiveToken, output: LiveToken, amount: bigint): InternalStep | null => {
+      if (!PERM_WETH_ADAPTER_ADDRESS || !wethHub || !hooksAllowed) return null;
+      const wrapping = input.address === ZERO_ADDRESS && output.address.toLowerCase() === wethHub.address.toLowerCase();
+      const unwrapping = output.address === ZERO_ADDRESS && input.address.toLowerCase() === wethHub.address.toLowerCase();
+      if (!wrapping && !unwrapping) return null;
+      const exact = async (nextAmount: bigint): Promise<RawQuote> => ({ amountOut: nextAmount, gasEstimate: 45_000n });
+      return {
+        providerId: "WETH_WRAP",
+        providerLabel: wrapping ? "Wrap ETH → WETH (1:1)" : "Unwrap WETH → ETH (1:1)",
+        adapter: PERM_WETH_ADAPTER_ADDRESS,
+        tokenIn: input.address,
+        tokenOut: output.address,
+        amountIn: amount.toString(),
+        amountOut: amount.toString(),
+        gasEstimate: "45000",
+        poolId: keccak256(toHex(wrapping ? "PERM_WETH_WRAP_V1" : "PERM_WETH_UNWRAP_V1")),
+        poolFee: 0,
+        hook: ZERO_ADDRESS,
+        verifiedHook: false,
+        data: "0x",
+        requote: exact,
+      };
+    };
+
     const bestGasConversionStep = async (output: LiveToken, amount: bigint): Promise<InternalStep | undefined> => {
       if (output.address === ZERO_ADDRESS) return undefined;
       const tasks: Array<() => Promise<InternalStep | null>> = [];
@@ -443,7 +497,26 @@ export async function POST(request: NextRequest) {
         .sort((a, b) => BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : BigInt(b.amountOut) < BigInt(a.amountOut) ? -1 : 0)[0];
     };
 
+    // Mainnet: the "v4" mode means direct (hookless) Uniswap v4 only, so a clip narrated as "Uniswap v4" can never
+    // settle through an Aggregator Hook; hook routes appear in "hooks" and "best". Testnet keeps hooks under "v4".
+    const hookModeActive = routingMode === "best" || routingMode === "hooks" || (routingMode === "v4" && !IS_MAINNET);
     const edges = async (input: LiveToken, output: LiveToken, amount: bigint): Promise<InternalStep[]> => {
+      // WETH is a hook-only hub: it is reached by the 1:1 wrap step and left through Aggregator Hook pools.
+      // Every other venue already wraps ETH internally, so quoting them again with WETH would only duplicate routes.
+      const isWethHub = (token: LiveToken) => Boolean(wethHub && token.address.toLowerCase() === wethHub.address.toLowerCase());
+      if (isWethHub(input) || isWethHub(output)) {
+        const wrap = wrapStep(input, output, amount);
+        if (wrap) return hookModeActive ? [wrap] : [];
+        if (!hooksAllowed || !hookModeActive) return [];
+        const hookPools = configuredHookPools().filter((pool) => {
+          const a = pool.currency0.toLowerCase();
+          const b = pool.currency1.toLowerCase();
+          return (a === input.address.toLowerCase() && b === output.address.toLowerCase())
+            || (b === input.address.toLowerCase() && a === output.address.toLowerCase());
+        });
+        const hookTasks = hookPools.slice(0, 16).map((pool) => () => v4Step(input, output, amount, pool).catch(() => null));
+        return (await runLimited(hookTasks)).filter((step): step is InternalStep => step !== null);
+      }
       const pools = [...tokenPairPools(input.address, output.address), ...configuredHookPools().filter((pool) => {
         const a = pool.currency0.toLowerCase();
         const b = pool.currency1.toLowerCase();
@@ -460,13 +533,13 @@ export async function POST(request: NextRequest) {
       if (routingMode === "best" || routingMode === "v2") {
         tasks.push(() => v2Step(input, output, amount).catch(() => null));
       }
-      if (!stagingRequested && (routingMode === "best" || routingMode === "v4" || routingMode === "hooks")) {
+      if (hooksAllowed && hookModeActive) {
         for (const pool of pools.filter((item) => item.sourceType === "aggregator-hook").slice(0, 16)) tasks.push(() => v4Step(input, output, amount, pool).catch(() => null));
       }
       return (await runLimited(tasks)).filter((step): step is InternalStep => step !== null);
     };
 
-    const gasConversionReference = 1_000_000_000_000_000n; // 0.001 testnet ETH; used only as a spot-rate probe.
+    const gasConversionReference = 1_000_000_000_000_000n; // 0.001 ETH; used only as a spot-rate probe.
     let fallbackGasConversion: Promise<InternalStep | undefined> | undefined;
     const fallbackConversion = () => {
       fallbackGasConversion ??= bestGasConversionStep(tokenOut, gasConversionReference);
@@ -527,7 +600,8 @@ export async function POST(request: NextRequest) {
     const candidatePromises: Array<Promise<InternalCandidate>> = directSteps.map((step) => buildCandidate([step]));
 
     const twoStepCandidates = await discoverTwoStepRoutes({
-      tokens: LIVE_TOKENS,
+      // Mainnet: only real hubs (ETH, USDG, WETH) as the middle hop – fast, and it is where the liquidity is.
+      tokens: IS_MAINNET ? [LIVE_TOKEN_MAP.ETH, ...ROUTE_HUB_TOKENS] : LIVE_TOKENS,
       input: tokenIn,
       output: tokenOut,
       amountIn: routedInput,
@@ -553,9 +627,17 @@ export async function POST(request: NextRequest) {
         return right > left ? 1 : right < left ? -1 : 0;
       })
       .slice(0, 12);
+    if (IS_MAINNET && deduped.length > 1) {
+      // Mainnet: hide near-empty pools (e.g. a 1% v3 pool or a thin hop holding a few dollars). A candidate more
+      // than 10% below the best raw output cannot be explained by gas at these sizes and would only mislead.
+      const bestRaw = deduped.reduce((best, candidate) => BigInt(candidate.amountOut) > best ? BigInt(candidate.amountOut) : best, 0n);
+      for (let index = deduped.length - 1; index >= 0; index -= 1) {
+        if (BigInt(deduped[index].amountOut) * 10n < bestRaw * 9n) deduped.splice(index, 1);
+      }
+    }
     if (!deduped.length) {
       return error(routingMode === "hooks"
-        ? "No verified Aggregator Hook candidate is configured and executable on this testnet"
+        ? "No verified Aggregator Hook candidate is configured and executable on this deployment"
         : routingMode === "mixed"
           ? "No executable v4-to-v3 or v3-to-v4 route is available for this pair"
           : "No executable route is available for this pair", 422);
@@ -578,7 +660,7 @@ export async function POST(request: NextRequest) {
     const quotedAt = Number(block.timestamp);
     const deadline = quotedAt + 90;
     const signer = quoteSignerConfiguration();
-    const domain = { name: "Perm", version: "2", chainId: RH_TESTNET_CHAIN_ID, verifyingContract: PERM_ROUTER_ADDRESS || ZERO_ADDRESS } as const;
+    const domain = { name: "Perm", version: "2", chainId: PERM_CHAIN_ID, verifyingContract: PERM_ROUTER_ADDRESS || ZERO_ADDRESS } as const;
     const message = {
       account,
       tokenIn: tokenIn.address,
@@ -590,7 +672,7 @@ export async function POST(request: NextRequest) {
       deadline: BigInt(deadline),
       quotedAt: BigInt(quotedAt),
       policyVersion: policy.version,
-      chainId: BigInt(RH_TESTNET_CHAIN_ID),
+      chainId: BigInt(PERM_CHAIN_ID),
       referrer,
       routeHash: keccak256(selectedInternal.routeData),
     };
@@ -624,7 +706,7 @@ export async function POST(request: NextRequest) {
     else if (stagingRequested && account !== ZERO_ADDRESS && !isAllowlistedStagingWallet(account, staging)) deploymentReason = "This wallet is not authorized for allowlisted staging execution.";
     else if (!RELEASE_DEPLOYMENT_READY && !stagingRequested) deploymentReason = "The Router v2 candidate has not passed and been promoted through the release gate.";
     else if (!signer.configured) deploymentReason = signer.reason || "The quote signer is not configured.";
-    else if (stagingRequested && !stagingSignerAllowed) deploymentReason = signer.reason || "The testnet-only staging signer is not explicitly enabled.";
+    else if (stagingRequested && !stagingSignerAllowed) deploymentReason = signer.reason || (IS_MAINNET ? "Allowlisted mainnet execution requires the remote quote signer." : "The testnet-only staging signer is not explicitly enabled.");
     else if (!stagingRequested && !releaseSignerAllowed) deploymentReason = "Production execution requires authenticated remote signer custody.";
     else if (account === ZERO_ADDRESS || recipient === ZERO_ADDRESS) deploymentReason = "Connect a wallet and provide a recipient to request an executable signed quote.";
 
@@ -659,7 +741,7 @@ export async function POST(request: NextRequest) {
     const selected = candidates.find((candidate) => candidate.routeId === selectedInternal.routeId) || candidates[0];
     const result: LiveQuote = {
       contractVersion: ROUTER_VERSION,
-      chainId: RH_TESTNET_CHAIN_ID,
+      chainId: PERM_CHAIN_ID,
       quoteId,
       quoteSignature,
       quotedAt,

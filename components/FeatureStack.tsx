@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import TokenLogo from "./TokenLogo";
+import { IS_MAINNET } from "@/lib/web3/network";
 
 const FEATURES: Array<{
   id: string;
@@ -16,8 +17,10 @@ const FEATURES: Array<{
     id: "routing",
     eyebrow: "01 · ROUTE COMPARISON",
     title: "Every valid candidate, judged on the same basis",
-    copy: "Perm compares whole-route candidates using the same amount, fee policy, and quote window. A hook route wins only when its net result is competitive.",
-    tag: "BEST VALID FILL",
+    copy: IS_MAINNET
+      ? "Perm compares whole-route candidates across Uniswap v4 and Uniswap v3 using the same amount, fee policy, and quote window. The highest valid net output is selected."
+      : "Perm compares whole-route candidates using the same amount, fee policy, and quote window. A hook route wins only when its net result is competitive.",
+    tag: "SAME-BASIS COMPARISON",
     visual: <RouteVisual />,
   },
   {
@@ -30,9 +33,11 @@ const FEATURES: Array<{
   },
   {
     id: "hooks",
-    eyebrow: "03 · HOOK-AWARE",
-    title: "Use verified hooks where they actually exist",
-    copy: "Aggregator Hook candidates are included only after chain, deployment, quote, spender, and execution target checks. Plain V2 or V3 routes are never relabeled as hook-powered.",
+    eyebrow: IS_MAINNET ? "03 · VENUE COVERAGE" : "03 · VERIFIED HOOKS",
+    title: IS_MAINNET ? "Only venues that actually exist on Robinhood Chain" : "Use verified hooks where they actually exist",
+    copy: IS_MAINNET
+      ? "Uniswap v4 direct pools (no hook) and Uniswap v3 pools enter comparison only after a liquidity check. Aggregator Hook routing stays disabled until a verified hook exists on this chain."
+      : "Aggregator Hook candidates are included only after chain, deployment, quote, spender, and execution target checks. Plain V2 or V3 routes are never relabeled as hook routes.",
     tag: "VERIFIED COVERAGE",
     visual: <HookVisual />,
   },
@@ -122,9 +127,9 @@ export default function FeatureStack() {
           <img src="/perm-mark.png" alt="" />
           <span className="section-kicker">THE ROUTER, MADE LEGIBLE</span>
           <h2>Compare routes. See every fee. Keep more of your swap.</h2>
-          <p>Explore the interface preview while execution contracts and verified integrations are finalized.</p>
+          <p>{IS_MAINNET ? "Router v2 is live on Robinhood Chain. Every settlement links to Blockscout." : "Explore the interface preview while execution contracts and verified integrations are finalized."}</p>
           <div className="button-row">
-            <Link className="button primary" href="/trade">Open router preview</Link>
+            <Link className="button primary" href="/trade">{IS_MAINNET ? "Open router" : "Open router preview"}</Link>
             <Link className="button secondary" href="/docs">Read protocol notes</Link>
           </div>
         </div>
@@ -134,21 +139,30 @@ export default function FeatureStack() {
 }
 
 function RouteVisual() {
-  const routes = [
-    ["V4 + verified hook", "1,846.72", 96, true],
-    ["Uniswap V3", "1,843.09", 81, false],
-    ["Uniswap V2", "1,837.44", 67, false],
-  ] as const;
+  // Schematic only. On mainnet no amounts are shown here; real numbers live on /trade and /proofs.
+  const routes = IS_MAINNET
+    ? [
+        ["Uniswap v4 direct", "candidate", 92, true],
+        ["Uniswap v3", "candidate", 88, false],
+        ["v4 → ETH → v3", "candidate", 74, false],
+      ] as const
+    : [
+        ["V4 + verified hook", "1,846.72", 96, true],
+        ["Uniswap V3", "1,843.09", 81, false],
+        ["Uniswap V2", "1,837.44", 67, false],
+      ] as const;
   return (
     <div className="route-visual">
-      <div className="visual-token-pair"><TokenLogo symbol="ETH" size={30} /><i>→</i><TokenLogo symbol="USDC" size={30} /><span>ETH / USDC</span></div>
+      {IS_MAINNET
+        ? <div className="visual-token-pair"><TokenLogo symbol="ETH" size={30} /><i>→</i><span>ETH → Stock Token</span></div>
+        : <div className="visual-token-pair"><TokenLogo symbol="ETH" size={30} /><i>→</i><TokenLogo symbol="USDC" size={30} /><span>ETH / USDC</span></div>}
       {routes.map(([name, amount, width, selected], index) => (
         <div className={`route-line${selected ? " selected" : ""}`} key={name} style={{ "--delay": `${index * 160}ms` } as CSSProperties}>
           <div><span>{selected ? "✓ " : ""}{name}</span><b>{amount}</b></div>
           <i><em style={{ width: `${width}%` }} /></i>
         </div>
       ))}
-      <small>same amount · same snapshot · net result</small>
+      <small>{IS_MAINNET ? "schematic · live quotes on /trade" : "same amount · same snapshot · net result"}</small>
     </div>
   );
 }
@@ -162,7 +176,7 @@ function RebateVisual() {
         <span className="discount">Fee rebate <b>−0.05</b></span>
         <span className="total">Net Perm fee <b>0.15</b></span>
       </div>
-      <small className="demo-label">DEMO POLICY · VALUES ARE ILLUSTRATIVE</small>
+      <small className="demo-label">{IS_MAINNET ? "POLICY v1 · PUBLISHED ONCHAIN" : "DEMO POLICY · VALUES ARE ILLUSTRATIVE"}</small>
     </div>
   );
 }
@@ -191,11 +205,11 @@ function ReceiptVisual() {
   return (
     <div className="receipt-visual">
       <div className="receipt-top"><span>SETTLED</span><i>✓</i></div>
-      <div><small>ROUTE</small><b>V4 hook → USDC</b></div>
-      <div><small>ACTUAL OUT</small><b>1,846.72 USDC</b></div>
+      <div><small>ROUTE</small><b>{IS_MAINNET ? "route steps" : "V4 hook → USDC"}</b></div>
+      <div><small>ACTUAL OUT</small><b>{IS_MAINNET ? "from SwapSettled" : "1,846.72 USDC"}</b></div>
       <div><small>FEE / REBATE</small><b>0.20 / −0.05</b></div>
       <div><small>POLICY</small><b>perm-fee-v1</b></div>
-      <code>0x8c3f…a91e</code>
+      <code>{IS_MAINNET ? "tx hash → Blockscout" : "0x8c3f…a91e"}</code>
       <span className="scanline" />
     </div>
   );
@@ -208,7 +222,7 @@ function ShieldVisual() {
         <path className="shield-body" d="M80 8 145 32v55c0 43-28 69-65 86-37-17-65-43-65-86V32Z" />
         <path className="shield-check" pathLength="1" d="m46 91 24 23 47-52" />
       </svg>
-      <div><span>Minimum received</span><b>1,837.48 USDC</b><small>bound at confirmation</small></div>
+      <div><span>Minimum received</span><b>{IS_MAINNET ? "signed minimum" : "1,837.48 USDC"}</b><small>bound at confirmation</small></div>
     </div>
   );
 }
@@ -220,7 +234,9 @@ function AccountingVisual() {
       <div className="account-flow"><i /><i /><i /></div>
       <div className="account-node router">PERM<br />ROUTER</div>
       <div className="account-branches">
-        <span>V2</span><span>V3</span><span className="hook">V4 HOOK</span>
+        {IS_MAINNET
+          ? <><span>V4</span><span>V3</span><span>V4→V3</span></>
+          : <><span>V2</span><span>V3</span><span className="hook">V4 HOOK</span></>}
       </div>
       <div className="account-label">one fee policy · multiple valid route types</div>
     </div>

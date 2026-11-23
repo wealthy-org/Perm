@@ -1,7 +1,7 @@
 import type { Address, Hex } from "viem";
 
 export type QuoteRouteStep = {
-  providerId: "UNISWAP_V4_DIRECT" | "UNISWAP_V4_AGGREGATOR_HOOK" | "SYNTHRA_V3" | "REVIEWED_V2_THIRD_PARTY";
+  providerId: "UNISWAP_V4_DIRECT" | "UNISWAP_V4_AGGREGATOR_HOOK" | "SYNTHRA_V3" | "UNISWAP_V3" | "REVIEWED_V2_THIRD_PARTY" | "UNISWAP_V2" | "WETH_WRAP";
   providerLabel: string;
   adapter: Address;
   tokenIn: Address;

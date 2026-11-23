@@ -7,6 +7,7 @@ import Header from "./Header";
 import AudioToggle from "./AudioToggle";
 import FeatureStack from "./FeatureStack";
 import Footer from "./Footer";
+import { IS_MAINNET } from "@/lib/web3/network";
 
 type JourneyCard = {
   from: number;
@@ -19,9 +20,13 @@ const FALLBACK_STOPS: SceneStop[] = [
   { n: "I", label: "Route", p: 0.30, a: 0.24 },
   { n: "II", label: "Rebate", p: 0.43, a: 0.37 },
   { n: "III", label: "Proof", p: 0.56, a: 0.50 },
-  { n: "IV", label: "Hooks", p: 0.69, a: 0.63 },
+  { n: "IV", label: IS_MAINNET ? "Venues" : "Hooks", p: 0.69, a: 0.63 },
   { n: "V", label: "Settle", p: 0.97, a: 0.88 },
 ];
+// On mainnet the fourth stop describes venue coverage: no Aggregator Hook is enabled on 4663.
+const relabelStops = (stops: SceneStop[]) => IS_MAINNET
+  ? stops.map((stop) => (stop.label === "Hooks" ? { ...stop, label: "Venues" } : stop))
+  : stops;
 
 const JOURNEY_CARDS: JourneyCard[] = [
   {
@@ -44,11 +49,11 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <h2>Compare the whole route</h2>
         <p>Candidate routes use the same amount, fee policy, and quote window. Perm selects a valid net result—not the loudest venue label.</p>
         <div className="journey-rows">
-          <span>Candidate A</span><b>V4 + verified hook</b>
+          <span>Candidate A</span><b>{IS_MAINNET ? "Uniswap v4 direct pool" : "V4 + verified hook"}</b>
           <span>Candidate B</span><b>Uniswap V3</b>
-          <span>Selection</span><b className="status-live">Best valid net result</b>
+          <span>Selection</span><b className="status-live">Highest valid net output</b>
         </div>
-        <Link className="card-link" href="/trade">Preview routing</Link>
+        <Link className="card-link" href="/trade">{IS_MAINNET ? "Open routing" : "Preview routing"}</Link>
       </>
     ),
   },
@@ -62,10 +67,10 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <p>The rebate comes from Perm&apos;s own fee. It does not rebrand LP fees, third-party fees, protocol fees, or gas as a discount.</p>
         <div className="journey-rows compact">
           <span>Gross Perm fee</span><b>0.20%</b>
-          <span>Illustrative rebate share</span><b className="mint-text">25%</b>
+          <span>{IS_MAINNET ? "Fee rebate share" : "Illustrative rebate share"}</span><b className="mint-text">25%</b>
           <span>Net Perm fee</span><b>0.15%</b>
         </div>
-        <small className="fixture-note">Illustrative fixture—not final commercial policy.</small>
+        <small className="fixture-note">{IS_MAINNET ? "Fee policy v1, published onchain by PermRouter." : "Illustrative fixture—not final commercial policy."}</small>
       </>
     ),
   },
@@ -84,10 +89,18 @@ const JOURNEY_CARDS: JourneyCard[] = [
   {
     from: 0.63,
     to: 0.745,
-    content: (
+    content: IS_MAINNET ? (
+      <>
+        <CardKicker left="IV · VENUES" right="ONCHAIN ONLY" />
+        <h2>Only venues that exist on this chain</h2>
+        <p>On Robinhood Chain, Perm quotes Uniswap v4 direct pools without hooks and Uniswap v3 pools that passed a liquidity check. Nothing else is labelled as a route.</p>
+        <div className="tag-row"><span>chain</span><span>adapter</span><span>pool</span><span>freshness</span></div>
+        <Link className="card-link" href="/docs#hooks">Understand the boundary</Link>
+      </>
+    ) : (
       <>
         <CardKicker left="IV · HOOKS" right="VERIFIED ONLY" />
-        <h2>Hook-aware, never hook-by-label</h2>
+        <h2>Verified hooks, never hook-by-label</h2>
         <p>A hook callback exists only when its pool is actually used. Perm verifies deployment and execution details before a hook candidate can enter comparison.</p>
         <div className="tag-row"><span>chain</span><span>spender</span><span>target</span><span>freshness</span></div>
         <Link className="card-link" href="/docs#hooks">Understand the boundary</Link>
@@ -101,7 +114,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
       <>
         <CardKicker left="THE ROUTER" right="NET RESULT" />
         <h2>No forced detour for a badge</h2>
-        <p>V2, V3, verified v4 hook routes, and other supported venues can compete. If gas cannot be converted into the same unit reliably, Perm shows the trade-off instead of inventing certainty.</p>
+        <p>{IS_MAINNET ? "Uniswap v4 and Uniswap v3 routes, including two-step routes through ETH, compete on the same basis." : "V2, V3, verified v4 hook routes, and other supported venues can compete."} If gas cannot be converted into the same unit reliably, Perm shows the trade-off instead of inventing certainty.</p>
       </>
     ),
   },
@@ -114,7 +127,7 @@ const JOURNEY_CARDS: JourneyCard[] = [
         <h2>See the route. Keep the difference.</h2>
         <p>Enter a transparent router experience designed around comparable quotes, a visible fee discount, and proof after execution.</p>
         <div className="button-row card-buttons">
-          <Link className="button primary" href="/trade">Launch preview</Link>
+          <Link className="button primary" href="/trade">{IS_MAINNET ? "Open router" : "Launch preview"}</Link>
           <Link className="button secondary" href="/docs">Read the brief</Link>
         </div>
       </>
@@ -194,7 +207,7 @@ export default function Landing() {
           },
         });
         controller.current = scene;
-        setStops(scene.stops);
+        setStops(relabelStops(scene.stops));
 
         const read = () => {
           lastObservedScroll = scrollY;
@@ -280,12 +293,12 @@ export default function Landing() {
 
       <section ref={hero} className="landing-hero">
         <div className="hero-orbit" aria-hidden="true"><i /><i /></div>
-        <span className="hero-kicker"><i /> HOOK-AWARE ROUTING · TRANSPARENT REBATE</span>
+        <span className="hero-kicker"><i /> {IS_MAINNET ? "MULTI-VENUE ROUTING · TRANSPARENT REBATE" : "VERIFIED-HOOK ROUTING · TRANSPARENT REBATE"}</span>
         <h1>PERM</h1>
         <p>COMPARE ROUTES. SEE EVERY FEE.<br />KEEP MORE OF YOUR SWAP.</p>
         <span className="hero-sub">A routing interface designed for measurable net results—not labels.</span>
         <div className="hero-badges">
-          <span>Best valid route</span><span>Perm fee rebate</span><span>Proof receipt</span>
+          <span>Signed route</span><span>Perm fee rebate</span><span>Proof receipt</span>
         </div>
         <div className="button-row hero-buttons">
           <Link className="button primary" href="/trade">Open router</Link>

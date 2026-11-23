@@ -1,5 +1,7 @@
 # Mainnet readiness policy
 
+> Operational steps for the non-release `allowlisted-mainnet` mode on chain 4663 are in [`MAINNET_RUNBOOK.md`](MAINNET_RUNBOOK.md). The gates below still apply to a public mainnet release.
+
 Perm is **not approved for mainnet deployment**. The repository may prepare and validate a Router-v2 testnet release, but no mainnet transaction may be sent until every gate below is complete and independently reviewed.
 
 ## 1. Product-completeness gate

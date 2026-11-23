@@ -5,7 +5,7 @@ import { formatUnits, type Address, type Hex } from "viem";
 import LiveTokenMark from "./LiveTokenMark";
 import { useWeb3 } from "./Web3Provider";
 import { permRouterAbi } from "@/lib/web3/abis";
-import { getRobinhoodPublicClient, RH_TESTNET_EXPLORER } from "@/lib/web3/config";
+import { NETWORK_COPY, getRobinhoodPublicClient, PERM_EXPLORER } from "@/lib/web3/config";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
 import { LIVE_TOKENS, type LiveToken } from "@/lib/web3/tokens";
 
@@ -125,8 +125,8 @@ export default function FeeClaims() {
         </div>
       </>}
 
-      {status.message && <div className={`transaction-status ${status.stage === "error" ? "error" : status.stage === "success" ? "success" : "confirming"}`}><i /><span>{status.message}</span>{status.hash && <a href={`${RH_TESTNET_EXPLORER}/tx/${status.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
-      <p className="claims-boundary">Robinhood Chain testnet only · test assets have no monetary value · claiming does not change the fee policy.</p>
+      {status.message && <div className={`transaction-status ${status.stage === "error" ? "error" : status.stage === "success" ? "success" : "confirming"}`}><i /><span>{status.message}</span>{status.hash && <a href={`${PERM_EXPLORER}/tx/${status.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
+      <p className="claims-boundary">{NETWORK_COPY.testnet ? "Robinhood Chain testnet only · test assets have no monetary value · claiming does not change the fee policy." : "Robinhood Chain · claims settle onchain and are visible on Blockscout · claiming does not change the fee policy."}</p>
     </section>
   );
 }

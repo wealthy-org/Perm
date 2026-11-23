@@ -3,7 +3,7 @@
 import { createWalletClient, custom, numberToHex, type Address, type EIP1193Provider, type WalletClient } from "viem";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type UniversalProvider from "@walletconnect/universal-provider";
-import { RH_TESTNET_CHAIN_ID, RH_TESTNET_EXPLORER, robinhoodTestnet } from "@/lib/web3/config";
+import { NETWORK_COPY, PERM_CHAIN_ID, PERM_EXPLORER, permChain } from "@/lib/web3/config";
 import {
   parseEip155ChainId,
   WALLETCONNECT_EIP155_METHODS,
@@ -138,18 +138,18 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
 
   const switchWith = useCallback(async (active: EIP1193Provider) => {
     try {
-      await active.request({ method: "wallet_switchEthereumChain", params: [{ chainId: numberToHex(RH_TESTNET_CHAIN_ID) }] });
+      await active.request({ method: "wallet_switchEthereumChain", params: [{ chainId: numberToHex(PERM_CHAIN_ID) }] });
     } catch (cause) {
       const code = (cause as { code?: number }).code;
       if (code !== 4902) throw cause;
       await active.request({
         method: "wallet_addEthereumChain",
         params: [{
-          chainId: numberToHex(RH_TESTNET_CHAIN_ID),
-          chainName: robinhoodTestnet.name,
-          nativeCurrency: robinhoodTestnet.nativeCurrency,
-          rpcUrls: robinhoodTestnet.rpcUrls.default.http,
-          blockExplorerUrls: [RH_TESTNET_EXPLORER],
+          chainId: numberToHex(PERM_CHAIN_ID),
+          chainName: permChain.name,
+          nativeCurrency: permChain.nativeCurrency,
+          rpcUrls: permChain.rpcUrls.default.http,
+          blockExplorerUrls: [PERM_EXPLORER],
         }],
       });
     }
@@ -178,7 +178,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
           projectId: walletConnectProjectId,
           metadata: {
             name: "Perm",
-            description: "Signed multi-venue testnet routing",
+            description: NETWORK_COPY.testnet ? "Signed multi-venue testnet routing" : "Signed multi-venue routing on Robinhood Chain",
             url: window.location.origin,
             icons: [`${window.location.origin}/icon.png`],
           },
@@ -203,10 +203,10 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
         await wc.connect({
           namespaces: {
             eip155: {
-              chains: [`eip155:${RH_TESTNET_CHAIN_ID}`],
+              chains: [`eip155:${PERM_CHAIN_ID}`],
               methods: [...WALLETCONNECT_EIP155_METHODS],
               events: ["accountsChanged", "chainChanged"],
-              rpcMap: { [RH_TESTNET_CHAIN_ID]: robinhoodTestnet.rpcUrls.default.http[0] },
+              rpcMap: { [PERM_CHAIN_ID]: permChain.rpcUrls.default.http[0] },
             },
           },
         });
@@ -227,7 +227,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
       }
       const chain = parseEip155ChainId(await active.request({ method: "eth_chainId" }));
       if (chain === undefined) throw new Error("Wallet returned an invalid chain ID");
-      if (chain !== RH_TESTNET_CHAIN_ID) await switchWith(active);
+      if (chain !== PERM_CHAIN_ID) await switchWith(active);
       else await refresh(active);
       setProvider(active);
       setWalletMode(mode);
@@ -263,7 +263,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
 
   const getWalletClient = useCallback(() => {
     const active = provider || getInjectedProvider();
-    return createWalletClient({ account, chain: robinhoodTestnet, transport: custom(active) });
+    return createWalletClient({ account, chain: permChain, transport: custom(active) });
   }, [account, provider]);
 
   const value = useMemo<Web3ContextValue>(() => ({
@@ -271,7 +271,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
     chainId,
     connecting,
     error,
-    isCorrectChain: chainId === RH_TESTNET_CHAIN_ID,
+    isCorrectChain: chainId === PERM_CHAIN_ID,
     walletMode,
     walletConnectAvailable: Boolean(walletConnectProjectId),
     connect,
@@ -289,7 +289,7 @@ export default function Web3Provider({ children }: { children: ReactNode }) {
         <button className="walletconnect-close" type="button" onClick={closeWalletConnect} aria-label="Close WalletConnect dialog">×</button>
         <span className="walletconnect-kicker">SECURE PAIRING</span>
         <h2 id="walletconnect-title">Scan with your wallet</h2>
-        <p id="walletconnect-help">Open a WalletConnect-compatible wallet, scan this code, and approve only the Robinhood Chain testnet session.</p>
+        <p id="walletconnect-help">Open a WalletConnect-compatible wallet, scan this code, and approve only the {NETWORK_COPY.name} session.</p>
         {walletConnectQr && <img src={walletConnectQr} alt="WalletConnect pairing QR code" width={260} height={260} />}
         <div className="walletconnect-actions">
           <a href={walletConnectUri}>Open wallet app</a>

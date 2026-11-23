@@ -10,7 +10,8 @@ import {
   ALLOWLISTED_STAGING_BUILD,
   DEPLOYMENT_MODE,
   DEPLOYMENT_READY,
-  RH_TESTNET_CHAIN_ID,
+  IS_MAINNET,
+  PERM_CHAIN_ID,
   ROUTER_VERSION,
   STAGING_DEPLOYMENT_CONFIGURED,
   STAGING_E2E_DECLARED,
@@ -33,16 +34,18 @@ export type LocalPermDeployment = {
   source: "browser-wallet";
 };
 
-const STORAGE_KEY = "perm:testnet-deployment:v2";
+const STORAGE_KEY = `perm:${PERM_CHAIN_ID}-deployment:v2`;
 const CHANGE_EVENT = "perm-deployment-change";
-export const LOCAL_DEPLOYMENT_ENABLED = process.env.NODE_ENV !== "production";
+// Browser-wallet deployment overrides are a local testnet convenience only. A mainnet build always
+// trusts the committed manifest / reviewed env addresses and never localStorage.
+export const LOCAL_DEPLOYMENT_ENABLED = process.env.NODE_ENV !== "production" && !IS_MAINNET;
 
 export function readLocalDeployment(): LocalPermDeployment | undefined {
   if (!LOCAL_DEPLOYMENT_ENABLED || typeof window === "undefined") return undefined;
   try {
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") as LocalPermDeployment | null;
     if (
-      !value || value.chainId !== RH_TESTNET_CHAIN_ID || value.routerVersion !== 2
+      !value || value.chainId !== PERM_CHAIN_ID || value.routerVersion !== 2
       || !isAddress(value.permRouter) || !isAddress(value.v4Adapter) || !isAddress(value.v3Adapter)
       || !isAddress(value.permit2) || !isAddress(value.quoteSigner) || !isAddress(value.owner)
       || !isAddress(value.treasury) || !isAddress(value.pauseGuardian)

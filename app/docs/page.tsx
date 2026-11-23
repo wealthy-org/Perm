@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import Header from "@/components/Header";
 import AudioToggle from "@/components/AudioToggle";
 import Footer from "@/components/Footer";
+import { IS_MAINNET } from "@/lib/web3/network";
 
 export const metadata: Metadata = {
   title: "Protocol notes",
-  description: "Perm hook-aware routing, fee rebate, accounting, and acceptance notes.",
+  description: "Perm multi-venue routing, hook boundary, fee rebate, accounting, and acceptance notes.",
 };
 
 const CHECKS = [
@@ -15,7 +16,9 @@ const CHECKS = [
   { done: true, text: "Fee, rebate, quote consumption, and receipt state roll back on revert; failed trades create no reward." },
   { done: true, text: "Only owner-approved adapters can execute; the v4 adapter targets one immutable PoolManager and clears exact approvals." },
   { done: true, text: "Unknown hooks and non-empty hook calldata are rejected; reentrancy, deadlines, and 120-second quote freshness are enforced." },
-  { done: false, text: "Release evidence still needs one verified Aggregator Hook settlement on chain 46630; no official testnet candidate is currently verified." },
+  IS_MAINNET
+    ? { done: true, text: "Robinhood Chain mainnet (4663): the Aggregator Hook provider is disabled; only hookless Uniswap v4 and Uniswap v3 pools that passed a liquidity check are quoted." }
+    : { done: false, text: "Release evidence still needs one verified Aggregator Hook settlement on chain 46630; no official testnet candidate is currently verified." },
 ];
 
 export default function DocsPage() {
@@ -38,12 +41,14 @@ export default function DocsPage() {
         </aside>
 
         <article className="docs-content">
-          <div className="docs-status"><i /> Implementation dated 17 November 2026 · contracts compiled, unit-tested, and exercised against a Robinhood testnet fork</div>
+          <div className="docs-status"><i /> {IS_MAINNET
+            ? "Robinhood Chain mainnet (4663) · Router v2 with Uniswap v4 and Uniswap v3 adapters · contracts unit-tested and rehearsed against a mainnet fork"
+            : "Implementation dated 17 November 2026 · contracts compiled, unit-tested, and exercised against a Robinhood testnet fork"}</div>
 
           <header id="overview" className="docs-hero">
             <span className="section-kicker">PERM · DIFFERENTIATION V4</span>
             <h1>Routing that can use verified hooks. A platform fee that visibly comes down.</h1>
-            <p>Perm keeps the multi-venue router baseline, then adds hook-aware route candidates and a settlement-time rebate funded from Perm&apos;s own platform fee.</p>
+            <p>Perm keeps the multi-venue router baseline, admits v4 hook candidates only after onchain verification, and applies a settlement-time rebate funded from Perm&apos;s own platform fee.</p>
           </header>
 
           <section id="implementation" className="docs-section">
@@ -56,19 +61,20 @@ export default function DocsPage() {
             </div>
             <div className="docs-callout"><b>Verified against live fork state:</b> tests execute both directions through the real v4 PoolManager and Synthra v3 router, including an actual Permit2 signature transfer.</div>
             <div className="docs-callout"><b>Release boundary:</b> PermRouter v2 is live on testnet chain 46630 and accepts signed quotes. Execution gating (executionReady) and official deployment (deploymentReady) remain pending governance acceptance and explicit promotion. No Aggregator Hook deployment has been established on chain 46630.</div>
+            {IS_MAINNET && <div className="docs-callout"><b>Mainnet boundary:</b> on Robinhood Chain (4663) the v3 adapter targets canonical Uniswap v3 SwapRouter02, not Synthra (no Synthra pools exist on 4663). Contract addresses, codehashes and the fee policy transaction are recorded in <code>deployments/robinhood-mainnet.json</code> and verifiable on Blockscout.</div>}
           </section>
 
           <section className="docs-section">
             <h2>Product decision</h2>
             <div className="decision-grid">
-              <article><span>01</span><h3>Hook-aware routing</h3><p>Include Uniswap v4 Aggregator Hook candidates only where deployment, quote, and integration details are verified for the target chain.</p></article>
+              <article><span>01</span><h3>Verified-hook routing</h3><p>Include Uniswap v4 Aggregator Hook candidates only where deployment, quote, and integration details are verified for the target chain.</p></article>
               <article><span>02</span><h3>Perm Fee Rebate</h3><p>Reduce the Perm platform fee on eligible swaps through the Perm entry point. A venue type such as V2 is included only after its deployment is separately reviewed and enabled; the current third-party V2 candidate remains withheld.</p></article>
             </div>
             <div className="docs-callout warning"><b>Not the default:</b> forcing every trade through a custom Perm hook. The router still compares valid net results and exposes gas separately.</div>
           </section>
 
           <section id="routing" className="docs-section">
-            <span className="section-kicker">A · HOOK-AWARE ROUTING</span>
+            <span className="section-kicker">A · VERIFIED-HOOK ROUTING</span>
             <h2>Quote and execution flow</h2>
             <ol className="flow-list">
               <li><b>Intent</b><span>User chooses pair, exact input, recipient, and slippage.</span></li>

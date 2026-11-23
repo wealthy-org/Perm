@@ -100,6 +100,10 @@ function remoteUrl() {
 
 export function quoteSignerConfiguration(): QuoteSignerConfiguration {
   const mode = process.env.PERM_QUOTE_SIGNER_MODE;
+  // Mainnet never signs with a key held by the web runtime: only authenticated remote custody.
+  if (process.env.NEXT_PUBLIC_PERM_CHAIN_ID === "4663" && mode !== "remote") {
+    return { mode: "unconfigured", address: null, configured: false, custodyReady: false, stagingReady: false, reason: "Mainnet requires PERM_QUOTE_SIGNER_MODE=remote" };
+  }
   if (mode === "remote") {
     const address = process.env.QUOTE_SIGNER_ADDRESS;
     if (!address || !isAddress(address)) return { mode, address: null, configured: false, custodyReady: false, stagingReady: false, reason: "QUOTE_SIGNER_ADDRESS is invalid" };
@@ -161,7 +165,7 @@ export async function signPermQuote(domain: QuoteDomain, message: PermQuoteMessa
     if (!staging.configured) throw new Error(staging.reason || "Allowlisted staging is not configured");
     if (!isAllowlistedStagingWallet(message.account, staging)) throw new Error("Quote account is not on the staging wallet allowlist");
     if (domain.chainId !== staging.chainId || message.chainId !== BigInt(staging.chainId || 0)) {
-      throw new Error("Staging quote signing is pinned to Robinhood testnet chain 46630");
+      throw new Error(`Allowlisted quote signing is pinned to chain ${staging.expectedChainId}`);
     }
     const configuredRouter = process.env.NEXT_PUBLIC_PERM_ROUTER_ADDRESS;
     if (!configuredRouter || !isAddress(configuredRouter) || getAddress(configuredRouter) !== getAddress(domain.verifyingContract)) {

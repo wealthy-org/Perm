@@ -5,12 +5,16 @@ import {
   PERM_V2_ADAPTER_ADDRESS,
   PERM_V3_ADAPTER_ADDRESS,
   PERM_V4_ADAPTER_ADDRESS,
+  PERM_WETH_ADAPTER_ADDRESS,
+  MAINNET_AGGREGATOR_HOOKS_ENABLED,
   RELEASE_DEPLOYMENT_READY,
+  REVIEWED_V2,
   REVIEWED_V2_STAGING_ENABLED,
-  RH_TESTNET_FALLBACK_RPC,
+  PERM_FALLBACK_RPC,
   ROUTER_VERSION,
   STAGING_DEPLOYMENT_CONFIGURED,
   STAGING_E2E_DECLARED,
+  V3_VENUE,
   ZERO_ADDRESS,
   createRobinhoodPublicClient,
 } from "@/lib/web3/config";
@@ -25,8 +29,12 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const DIRECT_V4_PROVIDER = keccak256(toHex("UNISWAP_V4_DIRECT"));
-const SYNTHRA_V3_PROVIDER = keccak256(toHex("SYNTHRA_V3"));
-const REVIEWED_V2_PROVIDER = keccak256(toHex("REVIEWED_V2_THIRD_PARTY"));
+// The v3 adapter provider id configured on this chain (SYNTHRA_V3 testnet, UNISWAP_V3 mainnet).
+const SYNTHRA_V3_PROVIDER = keccak256(toHex(V3_VENUE.providerId));
+// REVIEWED_V2_THIRD_PARTY on testnet, UNISWAP_V2 (official factory) on mainnet.
+const REVIEWED_V2_PROVIDER = keccak256(toHex(REVIEWED_V2.providerId));
+const AGGREGATOR_HOOK_PROVIDER = keccak256(toHex("UNISWAP_V4_AGGREGATOR_HOOK"));
+const WETH_WRAP_PROVIDER = keccak256(toHex("WETH_WRAP"));
 
 function aggregatorHooksDisabled() {
   const raw = process.env.PERM_AGGREGATOR_HOOKS_JSON;
@@ -67,7 +75,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     deploymentReady: RELEASE_DEPLOYMENT_READY,
     routerConfigured: Boolean(PERM_ROUTER_ADDRESS),
     primaryRpc: false,
-    fallbackRpcConfigured: Boolean(RH_TESTNET_FALLBACK_RPC),
+    fallbackRpcConfigured: Boolean(PERM_FALLBACK_RPC),
     indexerConfigured: indexedHistoryAvailable(),
     indexerRequired: process.env.PERM_REQUIRE_INDEXER === "1",
     sharedRateLimitConfigured: Boolean(process.env.PERM_RATE_LIMIT_DATABASE_URL || process.env.DATABASE_URL || process.env.PERM_INDEXER_DATABASE_URL),
@@ -107,6 +115,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     directV2AdapterEnabled: false,
     aggregatorHookProviderDisabled: false,
     aggregatorHookConfigurationDisabled: aggregatorHooksDisabled(),
+    // Mainnet only: codehash-pinned Aggregator Hooks behind PERM_MAINNET_ENABLE_AGGREGATOR_HOOKS=1.
+    aggregatorHooksRequested: MAINNET_AGGREGATOR_HOOKS_ENABLED,
+    aggregatorHookProviderConfigured: false,
+    wethAdapterEnabled: false,
     localBurnerSignerExplicitlyAllowed: staging.localBurnerSignerAllowed,
     quoteSignerConfigured: signer.configured,
     quoteSignerMode: signer.mode,
@@ -144,6 +156,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         stagingChecks.v4AdapterCodePresent = Boolean(v4Code && v4Code !== "0x");
         stagingChecks.directV4AdapterEnabled = v4Config[0] && v4Config[1].toLowerCase() === DIRECT_V4_PROVIDER.toLowerCase();
         stagingChecks.aggregatorHookProviderDisabled = hookProvider === `0x${"0".repeat(64)}`;
+        stagingChecks.aggregatorHookProviderConfigured = hookProvider.toLowerCase() === AGGREGATOR_HOOK_PROVIDER.toLowerCase();
+      }
+      if (MAINNET_AGGREGATOR_HOOKS_ENABLED && PERM_WETH_ADAPTER_ADDRESS) {
+        const wethConfig = await client.readContract({ address: PERM_ROUTER_ADDRESS, abi: permRouterAbi, functionName: "adapters", args: [PERM_WETH_ADAPTER_ADDRESS] });
+        stagingChecks.wethAdapterEnabled = wethConfig[0] && wethConfig[1].toLowerCase() === WETH_WRAP_PROVIDER.toLowerCase();
       }
       if (PERM_V3_ADAPTER_ADDRESS) {
         const v3Code = await client.getCode({ address: PERM_V3_ADAPTER_ADDRESS });
@@ -211,7 +228,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             const directProvider = decoded.args.providerId.toLowerCase() === DIRECT_V4_PROVIDER.toLowerCase()
               || decoded.args.providerId.toLowerCase() === SYNTHRA_V3_PROVIDER.toLowerCase()
               || (REVIEWED_V2_STAGING_ENABLED && decoded.args.providerId.toLowerCase() === REVIEWED_V2_PROVIDER.toLowerCase());
-            if (!directProvider || decoded.args.hook.toLowerCase() !== ZERO_ADDRESS) forbiddenStep = true;
+            // Mainnet with Aggregator Hooks enabled: the 1:1 WETH wrap step and codehash-pinned hook steps are reviewed too.
+            const hookProvider = MAINNET_AGGREGATOR_HOOKS_ENABLED
+              && decoded.args.providerId.toLowerCase() === AGGREGATOR_HOOK_PROVIDER.toLowerCase()
+              && decoded.args.hook.toLowerCase() !== ZERO_ADDRESS;
+            const wrapProvider = MAINNET_AGGREGATOR_HOOKS_ENABLED
+              && decoded.args.providerId.toLowerCase() === WETH_WRAP_PROVIDER.toLowerCase()
+              && decoded.args.hook.toLowerCase() === ZERO_ADDRESS;
+            if (!hookProvider && !wrapProvider && (!directProvider || decoded.args.hook.toLowerCase() !== ZERO_ADDRESS)) forbiddenStep = true;
           }
         } catch {
           // Ignore unrelated logs emitted by the exact router address.
@@ -270,7 +294,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           && stagingChecks.v2AdapterCodePresent
           && stagingChecks.directV2AdapterEnabled
       ))
-      && stagingChecks.aggregatorHookProviderDisabled
+      && (stagingChecks.aggregatorHooksRequested
+        ? stagingChecks.aggregatorHookProviderConfigured && stagingChecks.wethAdapterEnabled
+        : stagingChecks.aggregatorHookProviderDisabled)
       && stagingChecks.aggregatorHookConfigurationDisabled
       && stagingChecks.quoteSignerConfigured
       && stagingChecks.quoteSignerStagingReady

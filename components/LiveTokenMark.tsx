@@ -18,6 +18,15 @@ const TOKEN_MARKS: Record<LiveTokenSymbol, TokenMark> = {
   PLTR: { logo: "/tokens/pltr.svg", background: "#f2f2f2", scale: 0.66 },
   NFLX: { logo: "/tokens/nflx.svg", background: "#fff0f1", scale: 0.64 },
   AMD: { logo: "/tokens/amd.svg", background: "#fff1f1", scale: 0.68 },
+  // Neutral lettermarks (not issuer logos) for the additional mainnet Stock Tokens.
+  GOOGL: { logo: "/tokens/googl.svg", background: "#eef3fe", scale: 1 },
+  META: { logo: "/tokens/meta.svg", background: "#edf3ff", scale: 1 },
+  SPY: { logo: "/tokens/spy.svg", background: "#f8eef1", scale: 1 },
+  QQQ: { logo: "/tokens/qqq.svg", background: "#eef4fa", scale: 1 },
+  COIN: { logo: "/tokens/coin.svg", background: "#edf2ff", scale: 1 },
+  MSFT: { logo: "/tokens/msft.svg", background: "#f1f1f1", scale: 1 },
+  WETH: { logo: "/tokens/weth.png", background: "#f1f3f7", scale: 1 },
+  USDG: { logo: "/tokens/usdg.svg", background: "#eaf5f0", scale: 1 },
 };
 
 export default function LiveTokenMark({ token, size }: { token: LiveToken; size: number }) {

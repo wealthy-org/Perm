@@ -109,6 +109,8 @@ PERM_QUOTE_SIGNER_TOKEN='server-only credential'
 
 Alamat signer harus sama dengan `PermRouter.quoteSigner()`. Service membatasi stream respons, menolak redirect/content-type yang salah, memulihkan setiap signature EIP-712, dan menolak identitas/signature yang tidak cocok. Key maupun credential tidak boleh memakai prefix `NEXT_PUBLIC_` atau masuk repository. Health execution menolak mode raw-key. Sebelum release, jalankan `pnpm --silent release:probe-signer` terhadap KMS/HSM nyata dan ikat SHA-256 log tanpa signature itu ke attestation custody.
 
+Untuk mainnet 4663 mode `allowlisted-mainnet` (rekaman/showcase), signer remote siap-deploy ada di `services/quote-signer/` dan langkah lengkapnya di [`docs/MAINNET_RUNBOOK.md`](docs/MAINNET_RUNBOOK.md): deploy kontrak, signer, env Vercel, allowlist, dan smoke test.
+
 Mode release resmi tetap tidak akan menandatangani quote executable selama manifest resmi masih Router v1. Pengecualian hanya berlaku pada mode eksplisit `allowlisted-testnet-staging`: server menandatangani quote untuk akun allowlist dengan burner signer testnet, selalu melaporkan `executionReady: false`, dan tidak dapat memenuhi gate rilis.
 
 ## Durable indexer

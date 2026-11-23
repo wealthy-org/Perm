@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shortAddress, useWeb3 } from "./Web3Provider";
+import { IS_MAINNET, NETWORK_COPY } from "@/lib/web3/network";
 
 const NAV = [
   ["/trade", "Trade"],
@@ -13,15 +14,16 @@ const NAV = [
   ["/docs", "Docs"],
 ] as const;
 
-const MENU = [
+const BASE_MENU = [
   ["/", "Walk the flow", "00"],
   ["/trade", "Open router", "01"],
   ["/routes", "Route explorer", "02"],
   ["/rebate", "Fee rebate", "03"],
   ["/proofs", "Settlement proof", "04"],
   ["/docs", "Protocol notes", "05"],
-  ["/setup", "Testnet setup", "06"],
 ] as const;
+// The browser-wallet setup page is a testnet tool; a mainnet build never links to it.
+const MENU = IS_MAINNET ? BASE_MENU : [...BASE_MENU, ["/setup", "Testnet setup", "06"] as const];
 
 export default function Header({ extra }: { extra?: ReactNode }) {
   const path = usePathname();
@@ -121,9 +123,9 @@ export default function Header({ extra }: { extra?: ReactNode }) {
             className={`network-pill${account && !isCorrectChain ? " wrong-network" : ""}`}
             type="button"
             onClick={() => account && !isCorrectChain ? void switchNetwork().catch(() => undefined) : undefined}
-            aria-label={isCorrectChain ? "Connected to Robinhood Chain Testnet" : "Switch to Robinhood Chain Testnet"}
+            aria-label={isCorrectChain ? `Connected to ${NETWORK_COPY.name}` : `Switch to ${NETWORK_COPY.name}`}
           >
-            <i aria-hidden="true" /><span>{account && !isCorrectChain ? "Wrong network" : "RH Testnet"}</span><small>⌄</small>
+            <i aria-hidden="true" /><span>{account && !isCorrectChain ? "Wrong network" : NETWORK_COPY.chipLabel}</span><small>⌄</small>
           </button>
           <div className="wallet-connect-wrap" ref={walletRef}>
             <button

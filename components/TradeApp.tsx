@@ -19,10 +19,15 @@ import LiveTokenMark from "./LiveTokenMark";
 import { useWeb3 } from "./Web3Provider";
 import { erc20Abi, permRouterAbi } from "@/lib/web3/abis";
 import {
+  IS_MAINNET,
+  NETWORK_COPY,
   PERMIT2_ADDRESS,
   REVIEWED_V2_CLIENT_ENABLED,
-  RH_TESTNET_CHAIN_ID,
-  RH_TESTNET_EXPLORER,
+  REVIEWED_V2,
+  AGGREGATOR_HOOKS_CLIENT_ENABLED,
+  PERM_CHAIN_ID,
+  PERM_EXPLORER,
+  V3_VENUE,
   ZERO_ADDRESS,
   getRobinhoodPublicClient,
 } from "@/lib/web3/config";
@@ -416,7 +421,7 @@ export default function TradeApp() {
           const deadline = BigInt(quote.deadline);
           const signature = await wallet.signTypedData({
             account,
-            domain: { name: "Permit2", chainId: RH_TESTNET_CHAIN_ID, verifyingContract: deployment.permit2 || PERMIT2_ADDRESS },
+            domain: { name: "Permit2", chainId: PERM_CHAIN_ID, verifyingContract: deployment.permit2 || PERMIT2_ADDRESS },
             types: {
               TokenPermissions: [
                 { name: "token", type: "address" },
@@ -490,7 +495,7 @@ export default function TradeApp() {
           return logs[0]?.transactionHash;
         },
       });
-      setTx({ stage: "confirming", hash, message: "Waiting for Robinhood Chain testnet confirmation…" });
+      setTx({ stage: "confirming", hash, message: NETWORK_COPY.confirmationMessage });
       const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1 });
       if (receipt.status !== "success") throw new Error("The transaction reverted; no fee or rebate receipt was created.");
 
@@ -513,8 +518,8 @@ export default function TradeApp() {
   const primaryLabel = (() => {
     if (connecting) return "Connecting wallet…";
     if (!account) return "Connect wallet";
-    if (!isCorrectChain) return "Switch to RH Testnet";
-    if (!deployment.ready) return deployment.stagingConfigured ? "Staging E2E pending" : "Deploy Router v2";
+    if (!isCorrectChain) return `Switch to ${NETWORK_COPY.shortName}`;
+    if (!deployment.ready) return IS_MAINNET ? "Execution not enabled yet" : deployment.stagingConfigured ? "Staging E2E pending" : "Deploy Router v2";
     if (!recipientValid) return "Enter a valid recipient";
     if (!balancesReady) return "Loading balances…";
     if (!balanceEnough) return "Insufficient balance / gas";
@@ -523,7 +528,7 @@ export default function TradeApp() {
     if (!quoteMatchesInput) return "Waiting for matching quote…";
     if (!quote.executable) return "Signed execution unavailable";
     if (["approving", "signing", "simulating", "submitting", "confirming"].includes(tx.stage)) return tx.message || "Working…";
-    return "Swap on RH Testnet";
+    return `Swap on ${NETWORK_COPY.shortName}`;
   })();
 
   const buttonDisabled = Boolean(account && isCorrectChain && (
@@ -540,43 +545,51 @@ export default function TradeApp() {
 
       <section className="trade-shell app-enter">
         <div className="trade-intro">
-          <span className="section-kicker">PERM ROUTER V2 · ROBINHOOD CHAIN TESTNET</span>
+          <span className="section-kicker">PERM ROUTER V2 · {NETWORK_COPY.kicker}</span>
           <h1>Signed quotes. Multi-venue execution.</h1>
-          <p>Perm compares verified v4 and Synthra v3 candidates, supports token-to-token routes through ETH, applies the live fee policy, and signs every executable route before settlement.</p>
+          <p>Perm compares Uniswap v4 and {V3_VENUE.shortLabel} candidates, supports token-to-token routes through ETH, applies the live fee policy, and signs every executable route before settlement.</p>
           <div className="intro-points"><span><i>01</i> EIP-712 quote</span><span><i>02</i> Multi-hop routes</span><span><i>03</i> Step-level proof</span></div>
         </div>
 
-        <div className="token-marquee" aria-label="Robinhood testnet execution assets"><div>
+        <div className="token-marquee" aria-label={`${NETWORK_COPY.name} execution assets`}><div>
           {[...LIVE_TOKENS, ...LIVE_TOKENS].map((token, index) => <span key={`${token.symbol}-${index}`}><LiveTokenMark token={token} size={21} /><b>{token.displaySymbol}</b><small>{token.venue.replace("uniswap-", "").replace("synthra-", "")}</small></span>)}
         </div></div>
 
         <div className="trade-grid">
-          <section className="swap-panel glass-panel" aria-label="Executable testnet swap">
-            <header className="panel-header"><div><span className="section-kicker">EXACT INPUT</span><h2>Signed route</h2></div><button className="network-chip" type="button" onClick={() => void switchNetwork().catch(() => undefined)}><i /> RH Testnet <span>46630</span></button></header>
+          <section className="swap-panel glass-panel" aria-label="Executable swap">
+            <header className="panel-header"><div><span className="section-kicker">EXACT INPUT</span><h2>Signed route</h2></div><button className="network-chip" type="button" onClick={() => void switchNetwork().catch(() => undefined)}><i /> {NETWORK_COPY.chipLabel} <span>{PERM_CHAIN_ID}</span></button></header>
             <div className={`preview-banner${deployment.ready ? " live-banner" : ""}`}><i /> {
-              deployment.mode === "allowlisted-staging"
-                ? deployment.ready
-                  ? "Allowlisted Router v2 staging · non-release · testnet assets only"
-                  : "Allowlisted Router v2 staging · canonical E2E required before UI execution"
-                : deployment.ready
-                  ? "Router v2 execution · testnet assets have no monetary value"
-                  : "Router v1 is read-only · deploy and publish v2 before execution"
+              IS_MAINNET
+                ? deployment.mode === "allowlisted-staging"
+                  ? "Router v2 on Robinhood Chain · allowlisted wallets · every settlement verifiable on Blockscout"
+                  : deployment.ready
+                    ? "Router v2 on Robinhood Chain · every settlement verifiable on Blockscout"
+                    : "Read-only quotes · execution is not enabled for this wallet yet"
+                : deployment.mode === "allowlisted-staging"
+                  ? deployment.ready
+                    ? "Allowlisted Router v2 staging · non-release · testnet assets only"
+                    : "Allowlisted Router v2 staging · canonical E2E required before UI execution"
+                  : deployment.ready
+                    ? "Router v2 execution · testnet assets have no monetary value"
+                    : "Router v1 is read-only · deploy and publish v2 before execution"
             }</div>
             {referralStatus === "checking" && <div className="referral-banner checking"><i /><span>Verifying referral against Router v2…</span></div>}
             {referralStatus === "active" && <div className="referral-banner active"><i /><span>Referral active</span><code>{referrer.slice(0, 8)}…{referrer.slice(-6)}</code><b>{(referralShareBps / 100).toFixed(2).replace(/\.00$/, "")}% of net fee</b></div>}
             {referralIssue && <div className="referral-banner invalid"><i /><span>{referralIssue}</span></div>}
 
             <div className="mode-tabs" role="group" aria-label="Routing mode">
-              <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Best net result</button>
+              <button type="button" className={routingMode === "best" ? "active" : ""} onClick={() => setRoutingMode("best")}>Highest net output</button>
               <button type="button" className={routingMode === "v4" ? "active" : ""} onClick={() => setRoutingMode("v4")}>V4 only</button>
-              <button type="button" className={routingMode === "v3" ? "active" : ""} onClick={() => setRoutingMode("v3")}>Synthra v3</button>
-              {REVIEWED_V2_CLIENT_ENABLED && <button type="button" className={routingMode === "v2" ? "active" : ""} onClick={() => setRoutingMode("v2")}>Reviewed V2</button>}
+              <button type="button" className={routingMode === "v3" ? "active" : ""} onClick={() => setRoutingMode("v3")}>{V3_VENUE.shortLabel}</button>
+              {REVIEWED_V2_CLIENT_ENABLED && <button type="button" className={routingMode === "v2" ? "active" : ""} onClick={() => setRoutingMode("v2")}>{REVIEWED_V2.shortLabel}</button>}
               <button type="button" className={routingMode === "mixed" ? "active" : ""} onClick={() => setRoutingMode("mixed")}>V4 ↔ V3</button>
-              <button type="button" disabled={deployment.allowlistedStaging} className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Verified hooks</button>
+              {(IS_MAINNET ? AGGREGATOR_HOOKS_CLIENT_ENABLED : true) && <button type="button" disabled={!IS_MAINNET && deployment.allowlistedStaging} className={routingMode === "hooks" ? "active" : ""} onClick={() => setRoutingMode("hooks")}>Aggregator Hook</button>}
             </div>
-            <div className="mode-warning">{deployment.allowlistedStaging
-              ? "Aggregator Hook mode is disabled in non-release staging. Only verified direct v4 and Synthra v3 routes are eligible."
-              : "Hook mode fails closed when no reviewed Aggregator Hook deployment is configured. Plain routes are never relabeled as hook-powered."}</div>
+            <div className="mode-warning">{IS_MAINNET
+              ? `Eligible venues on Robinhood Chain: Uniswap v4 direct pools (no hook) and Uniswap v3 pools that passed a liquidity check${REVIEWED_V2_CLIENT_ENABLED ? ", plus Uniswap v2 pairs with enough depth" : ""}${AGGREGATOR_HOOKS_CLIENT_ENABLED ? ", plus Uniswap Aggregator Hook pools (Slipstream source, codehash-pinned, Uniswap protocol fee included in the quote)" : ""}. AMZN, NFLX and MSFT route through USDG. "V4 only" never uses a hook.`
+              : deployment.allowlistedStaging
+                ? "Aggregator Hook mode is disabled in non-release staging. Only verified direct v4 and Synthra v3 routes are eligible."
+                : "Hook mode fails closed when no reviewed Aggregator Hook deployment is configured. Plain routes are never relabeled as hook routes."}</div>
 
             <label className="token-box">
               <span className="token-box-label">YOU PAY</span>
@@ -628,13 +641,13 @@ export default function TradeApp() {
             {account && quoteError && <div className="transaction-status error"><i /><span>{quoteError}</span></div>}
             {quote && !quote.executable && quote.deploymentReason && <div className="transaction-status error"><i /><span>{quote.deploymentReason}</span></div>}
 
-            {account && isCorrectChain && !deployment.ready ? <Link className="connect-action setup-action" href="/setup">{deployment.stagingConfigured ? "Staging E2E pending" : "Prepare Router v2 deployment"}</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
-            {tx.message && <div className={`transaction-status ${tx.stage}`}><i /><span>{tx.message}</span>{tx.hash && <a href={`${RH_TESTNET_EXPLORER}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
+            {account && isCorrectChain && !deployment.ready && !IS_MAINNET ? <Link className="connect-action setup-action" href="/setup">{deployment.stagingConfigured ? "Staging E2E pending" : "Prepare Router v2 deployment"}</Link> : <button className="connect-action" type="button" disabled={buttonDisabled} onClick={() => void execute()}>{primaryLabel}</button>}
+            {tx.message && <div className={`transaction-status ${tx.stage}`}><i /><span>{tx.message}</span>{tx.hash && <a href={`${PERM_EXPLORER}/tx/${tx.hash}`} target="_blank" rel="noopener noreferrer">Explorer ↗</a>}</div>}
             {tx.stage === "success" && tx.message?.startsWith("Settled") && <Link className="receipt-link" href="/proofs">Open settlement receipt →</Link>}
-            <p className="swap-note">All assets are third-party testnet fixtures with no monetary value. Symbols do not represent equity, issuer affiliation, or guaranteed pricing.</p>
+            <p className="swap-note">{NETWORK_COPY.assetBoundary}{IS_MAINNET ? " Quotes are estimates until settlement; the minimum received is enforced onchain." : ""}</p>
 
             {picker && <div className="token-picker-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}><section ref={pickerRef} className="token-picker" role="dialog" aria-modal="true" aria-labelledby="token-picker-title">
-              <header><div><span className="section-kicker">CHAIN 46630</span><h3 id="token-picker-title">Choose a testnet asset</h3></div><button type="button" onClick={() => setPicker(null)} aria-label="Close token picker">×</button></header>
+              <header><div><span className="section-kicker">CHAIN {PERM_CHAIN_ID}</span><h3 id="token-picker-title">{IS_MAINNET ? "Choose a token" : "Choose a testnet asset"}</h3></div><button type="button" onClick={() => setPicker(null)} aria-label="Close token picker">×</button></header>
               <label className="token-search"><span>⌕</span><input autoFocus value={tokenSearch} onChange={(event) => setTokenSearch(event.target.value)} placeholder="Search name or symbol" /></label>
               <div className="token-list">{filteredTokens.map((token) => {
                 const current = picker === "sell" ? sellSymbol === token.symbol : buySymbol === token.symbol;
@@ -646,22 +659,22 @@ export default function TradeApp() {
 
           <aside className="route-panel glass-panel" aria-label="Live route comparison">
             <header className="panel-header route-panel-header"><div><span className="section-kicker">VALID CANDIDATES</span><h2>Same amount. Same policy.</h2></div><span className="fresh-chip"><i /> {quote ? "SIGNED" : "WAITING"}</span></header>
-            <div className="pair-context"><span><LiveTokenMark token={sellToken} size={25} /><LiveTokenMark token={buyToken} size={25} /></span><div><b>{sellToken.displaySymbol} → {buyToken.displaySymbol}</b><small>exact input · chain 46630</small></div><em>{quote?.candidates.length || 0} valid</em></div>
+            <div className="pair-context"><span><LiveTokenMark token={sellToken} size={25} /><LiveTokenMark token={buyToken} size={25} /></span><div><b>{sellToken.displaySymbol} → {buyToken.displaySymbol}</b><small>exact input · chain {PERM_CHAIN_ID}</small></div><em>{quote?.candidates.length || 0} valid</em></div>
             <div className="route-list">
               {quote?.candidates.map((route, index) => <article className={`candidate${index === 0 ? " selected" : ""}`} key={route.routeId} style={{ "--row-delay": `${index * 60}ms` } as CSSProperties}>
                 <div className="candidate-rank">{index === 0 ? "✓" : index + 1}</div>
-                <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">{route.routeKind.toUpperCase()}</span></div><p>{route.hook === ZERO_ADDRESS ? `${route.steps.length} verified step${route.steps.length > 1 ? "s" : ""} · no hook claim` : route.verifiedHook ? "Onchain codehash-verified hook" : "Hook unavailable"}</p><div className="route-path">{route.steps.map((step, stepIndex) => <span key={`${route.routeId}-${stepIndex}`}><em>{step.providerId === "SYNTHRA_V3" ? "V3" : step.providerId === "REVIEWED_V2_THIRD_PARTY" ? "V2" : "V4"} · {step.poolFee / 10_000}%</em>{stepIndex < route.steps.length - 1 && <i />}</span>)}</div></div>
+                <div className="candidate-main"><div><h3>{route.providerLabel}</h3><span className="verified-chip">{route.routeKind.toUpperCase()}</span></div><p>{route.hook === ZERO_ADDRESS ? `${route.steps.length} verified step${route.steps.length > 1 ? "s" : ""} · no hook claim` : route.verifiedHook ? "Onchain codehash-verified hook" : "Hook unavailable"}</p><div className="route-path">{route.steps.map((step, stepIndex) => <span key={`${route.routeId}-${stepIndex}`}><em>{step.providerId === "WETH_WRAP" ? "WRAP · 1:1" : `${step.providerId === "SYNTHRA_V3" || step.providerId === "UNISWAP_V3" ? "V3" : step.providerId === "REVIEWED_V2_THIRD_PARTY" || step.providerId === "UNISWAP_V2" ? "V2" : step.providerId === "UNISWAP_V4_AGGREGATOR_HOOK" ? "V4 HOOK" : "V4"} · ${step.poolFee >= 0x800000 ? "dynamic" : `${step.poolFee / 10_000}%`}`}</em>{stepIndex < route.steps.length - 1 && <i />}</span>)}</div></div>
                 <div className="candidate-output"><b>{formatTokenAmount(route.amountOut, buyToken)}</b><span>{buyToken.displaySymbol}</span><small>{Number(formatEther(BigInt(route.estimatedNetworkFeeWei))).toPrecision(3)} ETH gas</small></div>
               </article>)}
               {!quote && <div className="route-empty">{quoteLoading ? "Reading verified onchain quoters…" : quoteError || "Enter an amount to compare routes."}</div>}
             </div>
             <div className="comparison-note"><span>WHY THIS ROUTE</span><p>{quote ? quote.selected.gasNormalized ? "Candidates with a valid ETH-to-output conversion are ranked by estimated output after network gas." : "Output is ranked directly; gas remains separate where no trustworthy conversion exists." : "Invalid, stale, unverified-hook, or reverting candidates fail closed."}</p></div>
-            <div className="receipt-preview"><div className="receipt-preview-head"><span>SETTLEMENT GATE</span><i>{deployment.ready ? "V2 READY" : "DEPLOY V2"}</i></div><div><span>Quote</span><b>EIP-712 server signature</b></div><div><span>Approval</span><b>exact or Permit2</b></div><div><span>Min output</span><b>recipient-bound</b></div><div><span>Receipt</span><b>route-step events</b></div></div>
+            <div className="receipt-preview"><div className="receipt-preview-head"><span>SETTLEMENT GATE</span><i>{deployment.ready ? "V2 READY" : IS_MAINNET ? "READ-ONLY" : "DEPLOY V2"}</i></div><div><span>Quote</span><b>EIP-712 server signature</b></div><div><span>Approval</span><b>exact or Permit2</b></div><div><span>Min output</span><b>recipient-bound</b></div><div><span>Receipt</span><b>route-step events</b></div></div>
           </aside>
         </div>
       </section>
 
-      <section className="trade-explainer app-reveal"><div><span className="section-kicker">EXECUTION MODEL</span><h2>Every executable field is signed and checked.</h2></div><div className="explainer-grid"><article><b>01</b><h3>Signed accounting</h3><p>The fee policy, account, recipient, minimum, route hash, chain and expiry are part of one EIP-712 quote.</p></article><article><b>02</b><h3>Restricted adapters</h3><p>Every step uses an allowlisted adapter with immutable venue targets; v4 hooks are pinned to runtime codehash.</p></article><article><b>03</b><h3>Proof after execution</h3><p>The router emits route and per-step identities only after actual recipient output passes the minimum.</p></article></div><Link href="/docs" className="button secondary">Read security boundaries</Link></section>
+      <section className="trade-explainer app-reveal"><div><span className="section-kicker">EXECUTION MODEL</span><h2>Every executable field is signed and checked.</h2></div><div className="explainer-grid"><article><b>01</b><h3>Signed accounting</h3><p>The fee policy, account, recipient, minimum, route hash, chain and expiry are part of one EIP-712 quote.</p></article><article><b>02</b><h3>Restricted adapters</h3><p>{IS_MAINNET ? "Every step uses an allowlisted adapter with immutable venue targets: the Uniswap v4 PoolManager and Uniswap v3 SwapRouter02." : "Every step uses an allowlisted adapter with immutable venue targets; v4 hooks are pinned to runtime codehash."}</p></article><article><b>03</b><h3>Proof after execution</h3><p>The router emits route and per-step identities only after actual recipient output passes the minimum.</p></article></div><Link href="/docs" className="button secondary">Read security boundaries</Link></section>
       <div className="footer-shell app-footer"><Footer /></div>
     </main>
   );

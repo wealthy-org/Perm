@@ -7,7 +7,7 @@ import AudioToggle from "./AudioToggle";
 import Footer from "./Footer";
 import LiveTokenMark from "./LiveTokenMark";
 import { LIVE_TOKEN_BY_ADDRESS, LIVE_TOKEN_MAP, type LiveToken } from "@/lib/web3/tokens";
-import { ZERO_ADDRESS } from "@/lib/web3/config";
+import { NETWORK_COPY, PERM_CHAIN_ID, ZERO_ADDRESS } from "@/lib/web3/config";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
 import { useWeb3 } from "./Web3Provider";
 
@@ -192,7 +192,7 @@ export default function ProofExplorer() {
       <div className="app-aurora" aria-hidden="true"><i /><i /><i /><b /><b /></div>
       <section className="data-shell app-enter">
         <header className="data-hero">
-          <span className="section-kicker">OFFICIAL SETTLEMENT PROOF · ROBINHOOD TESTNET</span>
+          <span className="section-kicker">OFFICIAL SETTLEMENT PROOF · {NETWORK_COPY.kicker}</span>
           <h1>Exact router. Exact event. Every step.</h1>
           <p>Proofs are accepted only from the official manifest router. Router overrides are rejected, every SwapSettled event is decoded, and v2 receipts include each adapter, provider, pool identity, and hook claim.</p>
           <div className="data-disclaimer"><i /> No official successful event means no receipt and no rebate claim</div>
@@ -215,8 +215,8 @@ export default function ProofExplorer() {
                   <em>{receipt ? `${receipt.transactionHash.slice(0, 8)}…` : "INVALID"}</em>{receipt && <i>✓</i>}
                 </button>;
               })}
-              {loading && <div className="proof-empty">Reading official router logs from chain 46630…</div>}
-              {!loading && !filtered.length && <div className="proof-empty">No official receipt found. Connect the settlement wallet, execute a testnet swap, or paste a transaction hash.</div>}
+              {loading && <div className="proof-empty">Reading official router logs from chain {PERM_CHAIN_ID}…</div>}
+              {!loading && !filtered.length && <div className="proof-empty">No official receipt found. Connect the settlement wallet, execute a {NETWORK_COPY.testnet ? "testnet " : ""}swap, or paste a transaction hash.</div>}
             </div>
           </div>
 

@@ -2,13 +2,17 @@ export type RoutingToken = { address: string };
 export type RoutingStep = { amountOut: string };
 export type ProviderRoute = { routeKind: string; steps: readonly { providerId: string }[] };
 
+/** v3-style provider ids: Synthra v3 on testnet, canonical Uniswap v3 on mainnet. Kept inline
+ * (not imported from network.ts) so this module stays pure for scripts/test-route-planner.ts. */
+const V3_STYLE_PROVIDERS = new Set(["SYNTHRA_V3", "UNISWAP_V3"]);
+
 export function isExplicitV4V3Route(candidate: ProviderRoute): boolean {
-  const providers = new Set(candidate.steps.map((step) => step.providerId));
+  const providers = [...new Set(candidate.steps.map((step) => step.providerId))];
   return candidate.routeKind === "cross-venue"
     && candidate.steps.length === 2
-    && providers.size === 2
-    && providers.has("UNISWAP_V4_DIRECT")
-    && providers.has("SYNTHRA_V3");
+    && providers.length === 2
+    && providers.includes("UNISWAP_V4_DIRECT")
+    && providers.some((provider) => V3_STYLE_PROVIDERS.has(provider));
 }
 
 type TwoStepOptions<TToken extends RoutingToken, TStep extends RoutingStep, TCandidate> = {
