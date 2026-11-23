@@ -149,8 +149,17 @@ export function createRobinhoodPublicClient() {
   return createPublicClient({ chain: permChain, transport });
 }
 
+// Browser reads go through the same-origin /api/rpc relay first: some browsers, privacy
+// extensions and networks block the chain RPC host directly, which surfaced as
+// "HTTP request failed". The direct public RPC stays as a fallback.
+function createBrowserPublicClient() {
+  const relay = http(`${window.location.origin}/api/rpc`, { retryCount: 2, timeout: 20_000 });
+  const direct = http(PERM_RPC, { retryCount: 1, timeout: 15_000 });
+  return createPublicClient({ chain: permChain, transport: fallback([relay, direct]) });
+}
+
 let browserClient: ReturnType<typeof createRobinhoodPublicClient> | undefined;
 export function getRobinhoodPublicClient() {
-  browserClient ??= createRobinhoodPublicClient();
+  browserClient ??= typeof window === "undefined" ? createRobinhoodPublicClient() : createBrowserPublicClient();
   return browserClient;
 }

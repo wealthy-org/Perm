@@ -54,7 +54,7 @@ export default function FeeClaims() {
       setClaimables(LIVE_TOKENS.map((token, index) => ({ token, amount: amounts[index] })));
       setStatus((current) => current.stage === "success" ? current : { stage: "idle" });
     } catch (cause) {
-      setStatus({ stage: "error", message: cause instanceof Error ? cause.message : "Claimable fee read failed" });
+      setStatus({ stage: "error", message: (cause as { shortMessage?: string }).shortMessage || "Claimable fee read failed; refresh to retry." });
     }
   }, [account, deployment.router, deployment.version]);
 

@@ -34,18 +34,29 @@ export default function RebateCalculator() {
     setPolicy(undefined);
     setPolicyError(undefined);
     const client = getRobinhoodPublicClient();
-    const run = async () => {
+    let cancelled = false;
+    const run = async (attempt = 0): Promise<void> => {
       try {
         const activeVersion = deployment.version >= 2
           ? Number(await client.readContract({ address: deployment.router!, abi: permRouterAbi, functionName: "activePolicyVersion" }))
           : 1;
         const [platformFeeBps, rebateShareBps, enabled] = await client.readContract({ address: deployment.router!, abi: permRouterAbi, functionName: "feePolicies", args: [activeVersion] });
+        if (cancelled) return;
+        setPolicyError(undefined);
         setPolicy({ version: activeVersion, feeBps: platformFeeBps, rebateBps: rebateShareBps, enabled, source: deployment.version >= 2 ? "onchain" : "legacy" });
       } catch (cause) {
-        setPolicyError(cause instanceof Error ? cause.message : "Policy read failed");
+        if (cancelled) return;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 1_500 * (attempt + 1)));
+          if (!cancelled) return run(attempt + 1);
+          return;
+        }
+        console.warn("Policy read failed", cause);
+        setPolicyError("the chain RPC could not be reached. The values shown are the published v1 policy; refresh to retry.");
       }
     };
     void run();
+    return () => { cancelled = true; };
   }, [deployment.router, deployment.version]);
 
   const values = useMemo(() => {
