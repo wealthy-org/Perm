@@ -80,13 +80,13 @@
   "aggregatorHooks": [],
   "roles": {
     "owner": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
-    "treasury": "0x3d2faC269954487a63f51bF059701fbD9647e3Bf",
+    "treasury": "0xad5501954A52792280D868F7e613Efcc4F80fa6c",
     "pauseGuardian": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
     "quoteSigner": "0x183ef39A2eeEb812661a55a22b67b3917929f369",
     "timelock": null
   },
   "owner": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
-  "treasury": "0x3d2faC269954487a63f51bF059701fbD9647e3Bf",
+  "treasury": "0xad5501954A52792280D868F7e613Efcc4F80fa6c",
   "pauseGuardian": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
   "quoteSigner": "0x183ef39A2eeEb812661a55a22b67b3917929f369",
   "timelock": null,
