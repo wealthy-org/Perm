@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import {
+  encodeFunctionData,
   formatEther,
   formatUnits,
   getAddress,
@@ -40,9 +41,11 @@ import {
 import type { LiveQuote } from "@/lib/web3/quote";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
 import { submitWalletTransactionWithRecovery } from "@/lib/web3/wallet-transaction";
+import { ZGuardBlockedError, fetchZGuardStatus, guardPermSwap, type ZGuardStatus } from "@/lib/zguard/client";
 
 type PickerSide = "sell" | "buy" | null;
-type TxStage = "idle" | "approving" | "signing" | "simulating" | "submitting" | "confirming" | "success" | "error";
+type TxStage = "idle" | "approving" | "signing" | "simulating" | "guarding" | "submitting" | "confirming" | "success" | "error";
+const BUSY_STAGES: TxStage[] = ["approving", "signing", "simulating", "guarding", "submitting", "confirming"];
 type RoutingMode = "best" | "v4" | "v3" | "v2" | "mixed" | "hooks";
 
 type TxStatus = {
@@ -94,6 +97,14 @@ export default function TradeApp() {
   const balanceRequest = useRef(0);
   const pickerRef = useRef<HTMLElement>(null);
   const [tx, setTx] = useState<TxStatus>({ stage: "idle" });
+  // ZGuard gate (default-on). Until the status loads it is assumed enforce, never off.
+  const [zguard, setZguard] = useState<ZGuardStatus>({ mode: "enforce", ready: false, network: "", problem: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchZGuardStatus().then((status) => { if (!cancelled) setZguard(status); });
+    return () => { cancelled = true; };
+  }, []);
 
   const sellToken = LIVE_TOKEN_MAP[sellSymbol];
   const buyToken = LIVE_TOKEN_MAP[buySymbol];
@@ -476,10 +487,17 @@ export default function TradeApp() {
       });
 
       const router = deployment.router;
+      // ZGuard gate: the exact bytes below are checked by ZGuard and are the only bytes sent to the wallet.
+      const swapData = encodeFunctionData({ abi: permRouterAbi, functionName: "swapExactInput", args: simulation.request.args });
+      const swapValue = simulation.request.value ?? 0n;
+      setTx({ stage: "guarding", message: "ZGuard is checking the exact swap (quote parity, simulation, token risk)…" });
+      const guard = await guardPermSwap({ chainId: PERM_CHAIN_ID, router, from: account, data: swapData, value: swapValue });
+      const guardNote = guard.mode === "off" ? " ZGuard was switched off for this deployment." : ` ZGuard allow ${guard.verdict.decisionId ?? ""}`.trimEnd() + ".";
+
       let recoveryFromBlock = await publicClient.getBlockNumber();
       setTx({ stage: "submitting", message: "Confirm in your wallet. If its response is delayed, Perm will recover the canonical settlement…" });
       const hash = await submitWalletTransactionWithRecovery({
-        submit: () => wallet.writeContract(simulation.request),
+        submit: () => wallet.sendTransaction({ account, chain: wallet.chain, to: router, data: swapData, value: swapValue }),
         findCanonicalHash: async () => {
           const latestBlock = await publicClient.getBlockNumber();
           if (latestBlock < recoveryFromBlock) return undefined;
@@ -506,10 +524,11 @@ export default function TradeApp() {
       } catch {
         try { localStorage.setItem("perm:receipts", JSON.stringify([hash])); } catch { /* Onchain success must not be relabeled as a UI failure. */ }
       }
-      setTx({ stage: "success", hash, message: "Settled onchain. Every route step is now available in the proof." });
+      setTx({ stage: "success", hash, message: `Settled onchain. Every route step is now available in the proof.${guardNote}` });
       await refreshBalances();
       setQuoteTick((value) => value + 1);
     } catch (cause) {
+      if (cause instanceof ZGuardBlockedError) return setTx({ stage: "error", message: cause.message });
       const detail = cause as { shortMessage?: string; message?: string };
       setTx({ stage: "error", message: detail.shortMessage || detail.message || "Transaction failed" });
     }
@@ -527,13 +546,15 @@ export default function TradeApp() {
     if (!quote) return quoteError ? "Route unavailable" : "Enter an amount";
     if (!quoteMatchesInput) return "Waiting for matching quote…";
     if (!quote.executable) return "Signed execution unavailable";
-    if (["approving", "signing", "simulating", "submitting", "confirming"].includes(tx.stage)) return tx.message || "Working…";
+    if (BUSY_STAGES.includes(tx.stage)) return tx.message || "Working…";
+    if (zguard.mode === "enforce" && !zguard.ready) return "ZGuard unavailable · swap blocked";
     return `Swap on ${NETWORK_COPY.shortName}`;
   })();
 
   const buttonDisabled = Boolean(account && isCorrectChain && (
     !deployment.ready || !quote || !quoteMatchesInput || !quote.executable || !recipientValid || !balanceEnough || quoteLoading
-    || ["approving", "signing", "simulating", "submitting", "confirming"].includes(tx.stage)
+    || BUSY_STAGES.includes(tx.stage)
+    || (zguard.mode === "enforce" && !zguard.ready)
   ));
   const quoteKey = quote?.quoteId || `${sellSymbol}-${buySymbol}-${amount}`;
   const netFeeBps = quote ? quote.platformFeeBps * (10_000 - quote.rebateShareBps) / 10_000 : undefined;
@@ -573,6 +594,11 @@ export default function TradeApp() {
                     ? "Router v2 execution · testnet assets have no monetary value"
                     : "Router v1 is read-only · deploy and publish v2 before execution"
             }</div>
+            {zguard.mode === "off"
+              ? <div className="referral-banner invalid zguard-banner" role="alert"><i /><span><b>UNGUARDED</b> · ZGuard is switched off for this deployment (PERM_ZGUARD_MODE=off). Swaps are not checked before signing.</span></div>
+              : zguard.ready
+                ? <div className="referral-banner active zguard-banner"><i /><span>ZGuard on · every swap is checked before your wallet signs</span></div>
+                : <div className="referral-banner invalid zguard-banner" role="alert"><i /><span>ZGuard is required but unavailable{zguard.problem ? ` (${zguard.problem})` : ""}. Swaps are blocked until it is reachable.</span></div>}
             {referralStatus === "checking" && <div className="referral-banner checking"><i /><span>Verifying referral against Router v2…</span></div>}
             {referralStatus === "active" && <div className="referral-banner active"><i /><span>Referral active</span><code>{referrer.slice(0, 8)}…{referrer.slice(-6)}</code><b>{(referralShareBps / 100).toFixed(2).replace(/\.00$/, "")}% of net fee</b></div>}
             {referralIssue && <div className="referral-banner invalid"><i /><span>{referralIssue}</span></div>}
