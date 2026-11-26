@@ -23,6 +23,7 @@ import {
   IS_MAINNET,
   NETWORK_COPY,
   PERMIT2_ADDRESS,
+  PERM_ROUTER_ADDRESS,
   REVIEWED_V2_CLIENT_ENABLED,
   REVIEWED_V2,
   AGGREGATOR_HOOKS_CLIENT_ENABLED,
@@ -42,6 +43,7 @@ import type { LiveQuote } from "@/lib/web3/quote";
 import { usePermDeployment } from "@/lib/web3/local-deployment";
 import { submitWalletTransactionWithRecovery } from "@/lib/web3/wallet-transaction";
 import { ZGuardBlockedError, fetchZGuardStatus, guardPermSwap, type ZGuardStatus } from "@/lib/zguard/client";
+import { ApprovalPolicyError, assertGuardedApproval, assertPermit2Signature, buildGuardedApproval, buildGuardedPermit2, resolveOfficialSpenders } from "@/lib/web3/approval-gate";
 
 type PickerSide = "sell" | "buy" | null;
 type TxStage = "idle" | "approving" | "signing" | "simulating" | "guarding" | "submitting" | "confirming" | "success" | "error";
@@ -422,49 +424,63 @@ export default function TradeApp() {
       let permitInput = { nonce: 0n, deadline: 0n, signature: "0x" as Hex };
 
       if (quote.tokenIn !== ZERO_ADDRESS) {
+        // Approval gate (lib/web3/approval-gate.ts): exact quoted amount, official PermRouter/Permit2 only.
+        // Always on; it does not depend on PERM_ZGUARD_MODE and spends no ZGuard credit.
+        const official = resolveOfficialSpenders({
+          isMainnet: IS_MAINNET,
+          chainId: PERM_CHAIN_ID,
+          manifestRouter: PERM_ROUTER_ADDRESS,
+          manifestPermit2: PERMIT2_ADDRESS,
+          deployment: { router: deployment.router, permit2: deployment.permit2 || PERMIT2_ADDRESS },
+        });
+        if (getAddress(quote.tokenIn) !== getAddress(sellToken.address) || request.amountIn !== parsedAmount) {
+          throw new ApprovalPolicyError("the quote no longer matches the amount and token you entered");
+        }
         const [routerAllowance, permitAllowance] = await Promise.all([
-          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, deployment.router] }),
-          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, deployment.permit2 || PERMIT2_ADDRESS] }),
+          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, official.router] }),
+          publicClient.readContract({ address: quote.tokenIn, abi: erc20Abi, functionName: "allowance", args: [account, official.permit2] }),
         ]);
         if (preferPermit2 && permitAllowance >= request.amountIn) {
-          setTx({ stage: "signing", message: "Sign a one-trade Permit2 authorization. This is not an onchain transaction." });
-          const nonce = randomPermitNonce();
-          const deadline = BigInt(quote.deadline);
+          const typed = buildGuardedPermit2({
+            official,
+            chainId: wallet.chain?.id ?? PERM_CHAIN_ID,
+            token: quote.tokenIn,
+            amount: request.amountIn,
+            expectedAmount: parsedAmount,
+            nonce: randomPermitNonce(),
+            deadline: BigInt(quote.deadline),
+            nowSeconds: BigInt(Math.floor(Date.now() / 1000)),
+          });
+          setTx({ stage: "signing", message: "Sign a one-trade Permit2 authorization (exact amount, PermRouter only). This is not an onchain transaction." });
           const signature = await wallet.signTypedData({
             account,
-            domain: { name: "Permit2", chainId: PERM_CHAIN_ID, verifyingContract: deployment.permit2 || PERMIT2_ADDRESS },
-            types: {
-              TokenPermissions: [
-                { name: "token", type: "address" },
-                { name: "amount", type: "uint256" },
-              ],
-              PermitTransferFrom: [
-                { name: "permitted", type: "TokenPermissions" },
-                { name: "spender", type: "address" },
-                { name: "nonce", type: "uint256" },
-                { name: "deadline", type: "uint256" },
-              ],
-            },
-            primaryType: "PermitTransferFrom",
-            message: {
-              permitted: { token: quote.tokenIn, amount: request.amountIn },
-              spender: deployment.router,
-              nonce,
-              deadline,
-            },
+            domain: typed.domain,
+            types: typed.types,
+            primaryType: typed.primaryType,
+            message: typed.message,
           });
-          permitInput = { nonce, deadline, signature };
+          await assertPermit2Signature(typed, signature, account, (data, sig, owner) => publicClient.verifyTypedData({
+            address: owner,
+            domain: data.domain,
+            types: data.types,
+            primaryType: data.primaryType,
+            message: data.message,
+            signature: sig,
+          }));
+          permitInput = { nonce: typed.message.nonce, deadline: typed.message.deadline, signature };
         } else if (routerAllowance < request.amountIn) {
-          const spender = preferPermit2 ? (deployment.permit2 || PERMIT2_ADDRESS) : deployment.router;
-          setTx({ stage: "approving", message: `Approve exactly ${formatTokenAmount(request.amountIn, sellToken)} ${sellToken.displaySymbol} to ${preferPermit2 ? "Permit2" : "PermRouter"}` });
-          const approval = await wallet.writeContract({
-            account,
-            chain: wallet.chain,
-            address: quote.tokenIn,
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [spender, request.amountIn],
+          const approvalTx = buildGuardedApproval({
+            official,
+            chainId: wallet.chain?.id ?? PERM_CHAIN_ID,
+            token: quote.tokenIn,
+            spender: preferPermit2 ? official.permit2 : official.router,
+            amount: request.amountIn,
+            expectedAmount: parsedAmount,
           });
+          assertGuardedApproval(approvalTx, official, parsedAmount);
+          setTx({ stage: "approving", message: `Approve exactly ${formatTokenAmount(request.amountIn, sellToken)} ${sellToken.displaySymbol} to ${approvalTx.spender === official.permit2 ? "Permit2" : "PermRouter"}` });
+          // The gated bytes are the only bytes sent to the wallet.
+          const approval = await wallet.sendTransaction({ account, chain: wallet.chain, to: approvalTx.to, data: approvalTx.data, value: 0n });
           await refreshAfterApproval(approval, "Exact approval confirmed.");
           return;
         }
@@ -528,7 +544,7 @@ export default function TradeApp() {
       await refreshBalances();
       setQuoteTick((value) => value + 1);
     } catch (cause) {
-      if (cause instanceof ZGuardBlockedError) return setTx({ stage: "error", message: cause.message });
+      if (cause instanceof ZGuardBlockedError || cause instanceof ApprovalPolicyError) return setTx({ stage: "error", message: cause.message });
       const detail = cause as { shortMessage?: string; message?: string };
       setTx({ stage: "error", message: detail.shortMessage || detail.message || "Transaction failed" });
     }
