@@ -84,6 +84,16 @@ Catatan testnet: token fixture Perm yang owner-mintable (NVDA·T, AAPL·T, SPCX�
 
 Test: `pnpm test:zguard` (juga ikut di `server:test` dan `check`).
 
+### Approval gate (approve / Permit2)
+
+Otorisasi token sebelum swap diperiksa lokal di `lib/web3/approval-gate.ts`, **selalu aktif** (tidak ikut dimatikan `PERM_ZGUARD_MODE=off`, tidak memakai kredit ZGuard):
+
+- `approve` ERC-20 hanya ke PermRouter atau Permit2 resmi (di mainnet wajib sama dengan manifest), jumlah **persis** input quote (tidak pernah unlimited, maks uint160), chain aktif, value 0. Calldata dibangun, di-decode ulang, lalu byte itu yang dikirim ke wallet (`sendTransaction`).
+- Tanda tangan Permit2 `PermitTransferFrom`: domain Permit2 resmi di chain aktif, spender = PermRouter resmi, token/jumlah persis, deadline di masa depan dan paling lama 15 menit, nonce acak bukan nol. Typed data dibekukan sebelum ditandatangani; signature harus recover ke akun (akun kontrak/7702 lewat `verifyTypedData` onchain atas data yang sama).
+- Pelanggaran apa pun → pesan "Approval blocked" dan wallet tidak dipanggil.
+
+Test: `pnpm test:approval` (juga ikut di `server:test`).
+
 ## Halaman
 
 - `/trade` — quote dan settlement multi-venue.
