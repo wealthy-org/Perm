@@ -47,6 +47,7 @@ Semua token adalah fixture testnet tanpa nilai. Simbol seperti NVDA, AAPL, TSLA,
 - stale-input guard: tombol tidak dapat memakai quote lama;
 - requote setelah approval;
 - simulasi transaksi sebelum wallet submission;
+- ZGuard pre-sign gate default-on dan fail-closed sebelum setiap swap (lihat bagian ZGuard);
 - exact approval atau Permit2;
 - route comparison, step evidence, dan official proof explorer;
 - setup browser hanya untuk development—tidak dapat mengubah alamat production.
@@ -59,6 +60,29 @@ Semua token adalah fixture testnet tanpa nilai. Simbol seperti NVDA, AAPL, TSLA,
 - CI audit dependency, lint/typecheck, unit/security, fuzz/invariant, Solidity coverage, PGlite dan PostgreSQL 17, build, serta Slither;
 - scheduled pool discovery PR;
 - scheduled indexer, latest-state fork integration, dan deployment rehearsal.
+
+## ZGuard pre-sign gate (default-on)
+
+Setiap swap di `/trade` diperiksa [ZGuard](https://zguard-delta.vercel.app) **sebelum** wallet menandatangani. Ini menutup gap C8 / brief §9.5 di repo ZGuard.
+
+Alur:
+1. Browser meng-encode `swapExactInput` lalu mengirim **hanya byte transaksi** (`from`, `to`, `data`, `value`) ke `POST /api/zguard`.
+2. Route server membangun ulang request ZGuard dengan builder yang sama (`lib/zguard/request.ts`). Route hanya menerima transaksi ke Router resmi di chain aktif, dan hanya fungsi `swapExactInput`. Request lalu diteruskan ke `POST /v1/guard` memakai API key milik server; key ini tidak pernah sampai ke browser.
+3. ZGuard menjalankan quote parity (calldata di-encode ulang byte-per-byte), simulasi RHC (`eth_simulateV1`, output ≥ `minAmountOut`), dan token risk pada token output.
+4. Browser menghitung `payload_hash` dari byte yang sama, lalu memanggil wallet **hanya jika** keputusannya `allow`, hash-nya cocok, dan verdict belum kedaluwarsa. Byte yang dikirim ke wallet adalah byte yang diperiksa.
+
+Fail-closed: `deny`, `abstain`, hash mismatch, verdict kedaluwarsa, ZGuard tidak terjangkau, kredit habis, atau key kosong semuanya berarti swap tidak dikirim. Tombol Swap juga dinonaktifkan dan muncul banner merah.
+
+| Env (server) | Default | Arti |
+|---|---|---|
+| `PERM_ZGUARD_MODE` | `enforce` | Hanya string persis `off` yang mematikan gate; halaman lalu menampilkan banner merah **UNGUARDED** |
+| `PERM_ZGUARD_API_URL` | `https://zguard-delta.vercel.app` | Base URL API ZGuard (wajib https, kecuali localhost) |
+| `PERM_ZGUARD_API_KEY` | (kosong) | `zg_live_…` yang punya kredit; tiap swap memakai 1 panggilan `/v1/guard` |
+| `PERM_ZGUARD_TIMEOUT_MS` | `15000` | Timeout upstream (2000–30000) |
+
+Catatan testnet: token fixture Perm yang owner-mintable (NVDA·T, AAPL·T, SPCX·T, OPENAI·T, ANTHROPIC·T) ditolak ZGuard dengan `T-MINT`. Itu temuan risiko yang benar, bukan bug, jadi tidak ada bypass. Token saham Robinhood testnet (TSLA, AMZN, PLTR, NFLX, AMD) lolos token risk.
+
+Test: `pnpm test:zguard` (juga ikut di `server:test` dan `check`).
 
 ## Halaman
 
