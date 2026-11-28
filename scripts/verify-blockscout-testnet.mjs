@@ -128,29 +128,51 @@ async function main() {
     return;
   }
 
+  // One contract at a time through Blockscout's Etherscan-compatible endpoint (the path hardhat-verify uses):
+  // unlike the v2 REST endpoint it returns a GUID and a status with the failure reason. Submitting several
+  // contracts back to back on the v2 endpoint verified only the first one (run 2026-11-28).
   for (const t of TARGETS) {
-    if (t.verified) continue;
-    const form = new FormData();
-    form.append("compiler_version", compilerVersion);
-    form.append("contract_name", t.name);
-    form.append("license_type", t.license);
-    form.append("autodetect_constructor_args", "false");
-    form.append("constructor_args", t.constructorArgs);
-    form.append("files[0]", new Blob([JSON.stringify(t.input)], { type: "application/json" }), `${t.name}-standard-input.json`);
-    const r = await explorer(`/api/v2/smart-contracts/${t.address}/verification/via/standard-input`, { method: "POST", body: form });
-    const msg = r.body?.message ?? r.text;
-    if (r.status >= 400 && !/already verified/i.test(String(msg))) die(`${t.label}: Blockscout HTTP ${r.status}: ${msg}`);
-    log(`${t.label}: submitted (${compilerVersion}) → ${msg}`);
-  }
-  const deadline = Date.now() + 180_000;
-  for (const t of TARGETS) {
-    while (!t.verified && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      t.verified = (await explorer(`/api/v2/smart-contracts/${t.address}`)).body?.is_verified === true;
+    if (t.verified) {
+      log(`${t.label}: already verified, skipped`);
+      continue;
     }
-    log(`${t.label}: is_verified=${t.verified} · ${EXPLORER}/address/${t.address}?tab=contract`);
+    const body = new URLSearchParams({
+      module: "contract",
+      action: "verifysourcecode",
+      codeformat: "solidity-standard-json-input",
+      contractaddress: t.address,
+      contractname: `${t.source}:${t.name}`,
+      compilerversion: compilerVersion,
+      sourceCode: JSON.stringify(t.input),
+      constructorArguements: t.constructorArgs,
+      licenseType: t.license === "mit" ? "3" : "1",
+    });
+    const submit = await explorer("/api", { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded" } });
+    const submitMsg = String(submit.body?.result ?? submit.body?.message ?? submit.text);
+    if (/already verified/i.test(submitMsg)) {
+      t.verified = true;
+      log(`${t.label}: already verified`);
+      continue;
+    }
+    if (submit.body?.status !== "1") die(`${t.label}: submit refused (HTTP ${submit.status}): ${submitMsg}`);
+    const guid = submit.body.result;
+    log(`${t.label}: submitted (${compilerVersion}), guid ${guid}`);
+    let status = "";
+    for (const deadline = Date.now() + 300_000; Date.now() < deadline; ) {
+      await new Promise((r) => setTimeout(r, 5_000));
+      const r = await explorer(`/api?module=contract&action=checkverifystatus&guid=${encodeURIComponent(guid)}`);
+      status = String(r.body?.result ?? r.body?.message ?? r.text);
+      if (!/pending|queue|in progress/i.test(status)) break;
+    }
+    for (let i = 0; i < 12; i++) {
+      t.verified = (await explorer(`/api/v2/smart-contracts/${t.address}`)).body?.is_verified === true;
+      if (t.verified || !/pass/i.test(status)) break;
+      await new Promise((r) => setTimeout(r, 5_000));
+    }
+    log(`${t.label}: ${status} · is_verified=${t.verified} · ${EXPLORER}/address/${t.address}?tab=contract`);
+    if (!t.verified && /fail/i.test(status)) die(`${t.label}: Blockscout rejected the verification: ${status}`);
   }
-  if (TARGETS.some((t) => !t.verified)) die("not verified within 3 minutes; re-run later (verified contracts are skipped)");
+  if (TARGETS.some((t) => !t.verified)) die("not verified yet; re-run later (verified contracts are skipped)");
 
   manifest.sourceVerification = "verified";
   manifest.sourceVerificationResults = TARGETS.map((t) => ({
