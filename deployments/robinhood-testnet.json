@@ -34,12 +34,47 @@
   },
   "deploymentBlock": 154833178,
   "ownershipStatus": "accepted",
-  "sourceVerification": "pending",
+  "sourceVerification": "verified",
   "deploymentTransactions": [
     "0x1654e9dc382f6e1e743302d0e2ca19dcddc129ddfb65a2a39a9d051794e94daf",
     "0xd8a418addfb4f9aef8d8271a02d75deb8590d49f810fa81f92a033f649867c80",
     "0x0ded432bd75ce8637b99b6349c7c641db65e3e3c0f1e05a458fe4782305cceeb"
   ],
   "generatedAt": "2026-11-18T05:24:12.278Z",
-  "source": "browser-wallet"
+  "source": "browser-wallet",
+  "sourceVerificationResults": [
+    {
+      "contract": "PermRouter v1",
+      "address": "0x3e350b79D4983a0e86Ad4eE25dB1DBBbfB55114d",
+      "sourceRef": "5e13f77",
+      "compiler": "v0.8.26+commit.8a97fa7a",
+      "runtimeCodehash": "0x6b4022603f643cdad5529f44a2bc8dbe5a6fcab501be39902860a4ff061dfa18",
+      "bytecode": {
+        "matches": true
+      },
+      "explorerVerified": true
+    },
+    {
+      "contract": "PermV4Adapter v1",
+      "address": "0xC4Df49493a828F681160056cb6D46143B56593D0",
+      "sourceRef": "5e13f77",
+      "compiler": "v0.8.26+commit.8a97fa7a",
+      "runtimeCodehash": "0x146af5cacc6e0c41e4a4e3afbddf7d2a1c2c8914ced9a2445b270ea4c0f341f9",
+      "bytecode": {
+        "matches": true
+      },
+      "explorerVerified": true
+    },
+    {
+      "contract": "PermTimelock (testnet rehearsal)",
+      "address": "0x3a9337f46858d246b2865f8ca4b6727666593186",
+      "sourceRef": "a3a5555",
+      "compiler": "v0.8.26+commit.8a97fa7a",
+      "runtimeCodehash": "0x3e8ba5ed5e4db6d2a3004973029299df7bc3205aa648b91964dabd67c2c1f03d",
+      "bytecode": {
+        "matches": true
+      },
+      "explorerVerified": true
+    }
+  ]
 }
