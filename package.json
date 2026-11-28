@@ -47,6 +47,7 @@
     "contracts:deploy:mainnet": "hardhat run contracts/scripts/deploy-mainnet.cjs --network robinhoodMainnet",
     "mainnet:admin": "hardhat run contracts/scripts/mainnet-admin.cjs --network robinhoodMainnet",
     "mainnet:verify": "node scripts/mainnet/verify-deployment.mjs",
+    "contracts:verify:testnet-blockscout": "node scripts/verify-blockscout-testnet.mjs",
     "mainnet:smoke": "tsx scripts/mainnet/smoke-swap.ts",
     "mainnet:fork-e2e": "bash scripts/mainnet/fork-e2e.sh",
     "staging:create-keys": "node scripts/create-staging-keys.cjs",
